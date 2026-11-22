@@ -1,0 +1,2023 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:material_ui/material_ui.dart';
+
+import 'task_models.dart';
+import 'task_store.dart';
+
+void main() => runApp(const MinidoApp());
+
+class MinidoApp extends StatefulWidget {
+  const MinidoApp({super.key, this.store});
+
+  final TaskStore? store;
+
+  @override
+  State<MinidoApp> createState() => _MinidoAppState();
+}
+
+class _MinidoAppState extends State<MinidoApp> {
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _quickAddFocus = FocusNode();
+  final _quickAddController = TextEditingController();
+  late final TaskStore _store = widget.store ?? SharedPreferencesTaskStore();
+
+  List<TodoTask> _tasks = const [];
+  ThemeMode _themeMode = ThemeMode.light;
+  Priority? _priorityFilter;
+  final Set<String> _tagFilters = {};
+  String _search = '';
+  String _loadError = '';
+  bool _isLoading = true;
+  bool _isSaving = false;
+  int _pendingWrites = 0;
+  Future<void> _writeQueue = Future<void>.value();
+  String _viewMode = 'list'; // 'list' | 'kanban' | 'cancelled'
+  DateTime? _dueAt;
+  DateTime? _lastExported;
+
+  QuickAddDraft get _quickDraft => parseQuickAdd(_quickAddController.text);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_initialize());
+  }
+
+  @override
+  void dispose() {
+    _quickAddFocus.dispose();
+    _quickAddController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initialize() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = '';
+    });
+    try {
+      final saved = await _store.read();
+      final document = saved == null
+          ? BackupDocument(tasks: _sampleTasks())
+          : BackupDocument.fromJsonString(saved);
+      if (saved == null) await _store.write(document.toPrettyJson());
+      if (!mounted) return;
+      setState(() {
+        _tasks = document.tasks;
+        _themeMode = document.themeMode == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+        _isLoading = false;
+      });
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = 'Saved data is invalid: ${error.message}';
+      });
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = 'Could not load local data: $error';
+      });
+    }
+  }
+
+  List<TodoTask> _sampleTasks() => [
+    TodoTask(
+      id: 'sample-today-plan',
+      title: 'Plan the week',
+      notes: 'Take a few minutes to get organized.',
+      priority: Priority.high,
+      bucket: TaskBucket.today,
+      tags: ['planning', 'personal'],
+      subtasks: [
+        Subtask(id: 'sample-plan-1', title: 'Review calendar'),
+        Subtask(id: 'sample-plan-2', title: 'Pick top priorities'),
+        Subtask(id: 'sample-plan-3', title: 'Make a shopping list'),
+      ],
+    ),
+    TodoTask(
+      id: 'sample-upcoming',
+      title: 'Book a dentist appointment',
+      notes: 'Call the clinic this week.',
+      priority: Priority.medium,
+      bucket: TaskBucket.upcoming,
+      tags: ['health'],
+    ),
+    TodoTask(
+      id: 'sample-completed',
+      title: 'Water the houseplants',
+      priority: Priority.low,
+      bucket: TaskBucket.completed,
+      kanbanColumn: KanbanColumn.done,
+      tags: ['home'],
+    ),
+    TodoTask(
+      id: 'sample-today',
+      title: 'Take a walk outside',
+      notes: 'A little fresh air goes a long way.',
+      priority: Priority.low,
+      bucket: TaskBucket.today,
+      tags: ['wellbeing'],
+    ),
+  ];
+
+  Future<void> _persist() async {
+    final document = BackupDocument(
+      tasks: List.unmodifiable(_tasks),
+      themeMode: _themeMode == ThemeMode.dark ? 'dark' : 'light',
+    );
+    final snapshot = document.toPrettyJson();
+    _pendingWrites++;
+    setState(() => _isSaving = true);
+    final write = _writeQueue
+        .catchError((Object _) {})
+        .then((_) => _store.write(snapshot));
+    _writeQueue = write;
+    try {
+      await write;
+    } on Exception catch (error) {
+      _showMessage('Could not save your changes locally: $error');
+    } finally {
+      _pendingWrites--;
+      if (mounted) setState(() => _isSaving = _pendingWrites > 0);
+    }
+  }
+
+  void _showMessage(String message, {String? action, VoidCallback? onAction}) {
+    _messengerKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: action == null
+              ? null
+              : SnackBarAction(label: action, onPressed: onAction!),
+        ),
+      );
+  }
+
+  Future<void> _showQuickAddConfirmation() async {
+    final task = TodoTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      title: draft.title,
+      priority: draft.priority,
+      bucket: draft.bucket,
+      tags: List.unmodifiable(draft.tags),
+      dueAt: _dueAt,
+    );
+    final result = await showDialog<bool>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => AlertDialog(
+        title: const Text('Create task'),
+        content: SingleChildScrollView(
+          child: ListBody(
+            children: [
+              Text('Title: ${draft.title}'),
+              const SizedBox(height: 6),
+              Text('Priority: ${draft.priority.name}'),
+              const SizedBox(height: 6),
+              Text('Due: ${_dueAt == null ? 'No due date' : _formatDateTime(_dueAt)}'),
+              const SizedBox(height: 6),
+              Text('Tags: ${draft.tags.join(', ')}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm & Create'),
+          ),
+        ],
+      ),
+    );
+    if (result != true) return;
+    final task = TodoTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      title: draft.title,
+      priority: draft.priority,
+      bucket: draft.bucket,
+      tags: List.unmodifiable(draft.tags),
+      dueAt: _dueAt,
+    );
+    setState(() {
+      _tasks = [..._tasks, task];
+      _quickAddController.clear();
+      _dueAt = null;
+    });
+    unawaited(_persist());
+  }
+
+  void _addQuickTask() {
+    final draft = _quickDraft;
+    if (draft.title.isEmpty) return;
+    _dueAt = draft.bucket == TaskBucket.today
+        ? DateTime.now().toUtc()
+        : draft.bucket == TaskBucket.upcoming
+            ? DateTime.now().add(const Duration(days: 1)).toUtc()
+            : null;
+    _showQuickAddConfirmation();
+  }
+
+  void _replaceTask(TodoTask task) {
+    setState(() {
+      _tasks = [
+        for (final existing in _tasks)
+          if (existing.id == task.id) task else existing,
+      ];
+    });
+    unawaited(_persist());
+  }
+
+  void _toggleCompletion(TodoTask task) {
+    final now = DateTime.now().toUtc();
+    final updated = task.bucket == TaskBucket.completed
+        ? task.copyWith(
+            bucket: TaskBucket.upcoming,
+            kanbanColumn: KanbanColumn.toDo,
+            updatedAt: now,
+            completedAt: null,
+          )
+        : task.copyWith(
+            bucket: TaskBucket.completed,
+            kanbanColumn: KanbanColumn.done,
+            updatedAt: now,
+            completedAt: now,
+          );
+    _replaceTask(updated);
+    _showMessage(
+      task.bucket == TaskBucket.completed ? 'Task reopened' : 'Task completed',
+      action: 'Undo',
+      onAction: () => _replaceTask(task),
+    );
+  }
+
+  void _cancelTask(TodoTask task) {
+    setState(() {
+      _tasks = [
+        for (final existing in _tasks)
+          if (existing.id == task.id)
+            existing.copyWith(
+              isCancelled: true,
+              cancelledAt: DateTime.now().toUtc(),
+              updatedAt: DateTime.now().toUtc(),
+            )
+          else
+            existing,
+      ];
+    });
+    unawaited(_persist());
+    _showMessage(
+      'Task cancelled',
+      action: 'Undo',
+      onAction: () => _uncancelTask(task),
+    );
+  }
+
+  void _uncancelTask(TodoTask task) {
+    TodoTask? existing;
+    for (final item in _tasks) {
+      if (item.id == task.id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing == null || !existing.isCancelled) return;
+    setState(() {
+      _tasks = [
+        for (final item in _tasks)
+          if (item.id == task.id)
+            item.copyWith(
+              isCancelled: false,
+              cancelledAt: null,
+              updatedAt: DateTime.now().toUtc(),
+            )
+          else
+            item,
+      ];
+    });
+    unawaited(_persist());
+  }
+
+  void _moveTask(TodoTask task, KanbanColumn column) {
+    final updated = task.copyWith(
+      kanbanColumn: column,
+      bucket: column == KanbanColumn.done
+          ? TaskBucket.completed
+          : task.bucket == TaskBucket.completed
+          ? TaskBucket.upcoming
+          : task.bucket,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _replaceTask(updated);
+  }
+
+  Future<void> _editTask(TodoTask task) async {
+    final result = await showDialog<_EditorResult>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => _TaskEditor(task: task),
+    );
+    if (!mounted || result == null) return;
+    if (result.deleted) {
+      _deleteTask(task);
+    } else if (result.task != null) {
+      _replaceTask(result.task!);
+    }
+  }
+
+  Future<void> _clearSampleTasks() async {
+    setState(() => _tasks = _tasks.where((task) => !task.isSample).toList());
+    await _persist();
+  }
+
+  String _formatDateTime(DateTime time) {
+    return '${time.year}/${time.month.toString().padLeft(2, '0')}/${time.day.toString().padLeft(2, '0')} '
+        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _showTrashDialog() async {
+    final trashed = _tasks.where((task) => task.isDeleted).toList();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: _navigatorKey.currentContext!,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Trash'),
+        content: SizedBox(
+          width: 560,
+          child: trashed.isEmpty
+              ? const Center(child: Text('No trashed tasks.'))
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Soft-deleted tasks. Restore or delete forever.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    ...trashed.map((task) => ListTile(
+                      title: Text(task.title),
+                      subtitle: Text('Deleted ${_formatDateTime(task.updatedAt)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Restore',
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _restoreTask(task);
+                            },
+                            icon: const Icon(Icons.restore),
+                          ),
+                          IconButton(
+                            tooltip: 'Delete forever',
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _deleteForever(task);
+                            },
+                            icon: Icon(
+                              Icons.delete_forever,
+                              color: Theme.of(dialogContext).colorScheme.error,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _loadSampleTasks() {
+    final added = <TodoTask>[
+      TodoTask(
+        id: 'sample-load-plan',
+        title: 'Plan the week',
+        notes: 'Review goals and set top priorities.',
+        priority: Priority.high,
+        bucket: TaskBucket.today,
+        tags: ['planning', 'personal'],
+        subtasks: [
+          Subtask(id: 'load-plan-1', title: 'Review calendar'),
+          Subtask(id: 'load-plan-2', title: 'Pick top priorities'),
+          Subtask(id: 'load-plan-3', title: 'Make a shopping list'),
+        ],
+      ),
+      TodoTask(
+        id: 'sample-load-dentist',
+        title: 'Book a dentist appointment',
+        notes: 'Call the clinic this week.',
+        priority: Priority.medium,
+        bucket: TaskBucket.upcoming,
+        tags: ['health'],
+      ),
+      TodoTask(
+        id: 'sample-load-grocery',
+        title: 'Grocery shopping',
+        notes: 'Milk, eggs, bread, and fruit.',
+        priority: Priority.low,
+        bucket: TaskBucket.upcoming,
+        tags: ['home', 'errands'],
+      ),
+      TodoTask(
+        id: 'sample-load-plants',
+        title: 'Water the houseplants',
+        priority: Priority.low,
+        bucket: TaskBucket.completed,
+        kanbanColumn: KanbanColumn.done,
+        tags: ['home'],
+      ),
+    ];
+    setState(() => _tasks = [..._tasks, ...added]);
+    unawaited(_persist());
+    _showMessage('Sample tasks loaded');
+  }
+
+  String _backupFileName() {
+    final now = DateTime.now();
+    final date =
+        '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}';
+    return 'minido-backup-$date.json';
+  }
+
+  Future<void> _showExportDialog() async {
+    final exportJson = const JsonEncoder.withIndent('  ').convert(
+      <String, Object?>{
+        'version': 1,
+        'exportedAt': DateTime.now().toUtc().toIso8601String(),
+        'tasks': _tasks.map((task) => task.toJson()).toList(),
+      },
+    );
+    final lastExported = _lastExported;
+    await showDialog<void>(
+      context: _navigatorKey.currentContext!,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Export backup'),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Last exported: ${lastExported == null ? 'Not exported yet' : _formatDateTime(lastExported)}',
+                style: Theme.of(dialogContext).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Exports every task as formatted JSON.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              try {
+                await Clipboard.setData(ClipboardData(text: exportJson));
+                if (!dialogContext.mounted) return;
+                Navigator.pop(dialogContext);
+                _showMessage('Backup copied to clipboard');
+              } on Exception catch (error) {
+                _showMessage('Could not copy backup: $error');
+              }
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy JSON'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              try {
+                final bytes = utf8.encode(exportJson);
+                final fileName = _backupFileName();
+                final saved = await FilePicker.saveFile(
+                  dialogTitle: 'Save Minido Backup',
+                  fileName: fileName,
+                  bytes: bytes,
+                );
+                if (!dialogContext.mounted) return;
+                if (saved == null) {
+                  _showMessage('Backup was not saved');
+                  return;
+                }
+                _lastExported = DateTime.now().toUtc();
+                Navigator.pop(dialogContext);
+                _showMessage('Backup exported');
+              } on Exception catch (error) {
+                _showMessage('Could not export backup: $error');
+              }
+            },
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save .json File'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showImportDialog() async {
+    final result = await showDialog<_ImportResult>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => const _ImportDialog(),
+    );
+    if (!mounted || result == null) return;
+    List<TodoTask> imported;
+    try {
+      imported = _parseImportedTasks(result.source);
+    } on FormatException catch (error) {
+      _showMessage('Invalid backup: ${error.message}');
+      return;
+    } on Exception catch (error) {
+      _showMessage('Could not parse backup: $error');
+      return;
+    }
+    final replaceAll = result.replaceAll;
+    int added = 0;
+    int updated = 0;
+    if (replaceAll) {
+      setState(() => _tasks = List.unmodifiable(imported));
+    } else {
+      final byId = <String, TodoTask>{for (final t in _tasks) t.id: t};
+      final merged = <TodoTask>[];
+      final importedIds = <String>{};
+      for (final imp in imported) {
+        importedIds.add(imp.id);
+        final existing = byId[imp.id];
+        if (existing == null) {
+          merged.add(imp);
+          added++;
+        } else {
+          final importedWins =
+              imp.updatedAt.isAfter(existing.updatedAt) ||
+              imp.updatedAt == existing.updatedAt;
+          merged.add(importedWins ? imp : existing);
+          if (importedWins) updated++;
+        }
+      }
+      for (final t in _tasks) {
+        if (!importedIds.contains(t.id)) merged.add(t);
+      }
+      setState(() => _tasks = List.unmodifiable(merged));
+    }
+    await _persist();
+    if (!mounted) return;
+    _showMessage(
+      replaceAll
+          ? 'Imported: ${imported.length} replaced'
+          : 'Imported: $added added, $updated updated',
+    );
+  }
+
+  List<TodoTask> get _visibleTasks {
+    final query = _search.trim().toLowerCase();
+    return _tasks.where((task) {
+      final matchesSearch =
+          query.isEmpty ||
+          task.title.toLowerCase().contains(query) ||
+          task.notes.toLowerCase().contains(query) ||
+          task.tags.any((tag) => tag.toLowerCase().contains(query));
+      final matchesPriority =
+          _priorityFilter == null || task.priority == _priorityFilter;
+      final matchesTags =
+          _tagFilters.isEmpty || _tagFilters.every(task.tags.contains);
+      // Only show active (non-cancelled) tasks in normal view modes
+      final isActive = !task.isCancelled;
+      return matchesSearch && matchesPriority && matchesTags && isActive;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'Minido',
+    debugShowCheckedModeBanner: false,
+    scaffoldMessengerKey: _messengerKey,
+    navigatorKey: _navigatorKey,
+    themeMode: _themeMode,
+    theme: ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5266D7)),
+      scaffoldBackgroundColor: const Color(0xFFF7F8FC),
+    ),
+    darkTheme: ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF9AA8FF),
+        brightness: Brightness.dark,
+      ),
+    ),
+    home: Builder(
+      builder: (context) => Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          final focusContext = FocusManager.instance.primaryFocus?.context;
+          final isEditing =
+              focusContext?.widget is EditableText ||
+              focusContext?.findAncestorWidgetOfExactType<EditableText>() !=
+                  null;
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.slash &&
+              !isEditing) {
+            _quickAddFocus.requestFocus();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: _buildHome(context),
+      ),
+    ),
+  );
+
+  Widget _buildHome(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_rounded, color: Color(0xFF5266D7)),
+            SizedBox(width: 10),
+            Text('Minido'),
+          ],
+        ),
+        actions: [
+          if (_isSaving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                child: SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+          IconButton(
+            tooltip: _themeMode == ThemeMode.dark
+                ? 'Switch to light theme'
+                : 'Switch to dark theme',
+            onPressed: () {
+              setState(
+                () => _themeMode = _themeMode == ThemeMode.dark
+                    ? ThemeMode.light
+                    : ThemeMode.dark,
+              );
+              unawaited(_persist());
+            },
+            icon: Icon(
+              _themeMode == ThemeMode.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'View and restore',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (choice) {
+              switch (choice) {
+                case 'export':
+                  unawaited(_showExportDialog());
+                case 'import':
+                  unawaited(_showImportDialog());
+                case 'cancelled':
+                  setState(() => _viewMode = 'cancelled');
+                case 'list':
+                  setState(() => _viewMode = 'list');
+                case 'kanban':
+                  setState(() => _viewMode = 'kanban');
+                case 'load-samples':
+                  _loadSampleTasks();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.download_outlined),
+                  title: Text('Export JSON'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'import',
+                child: ListTile(
+                  leading: Icon(Icons.upload_file_outlined),
+                  title: Text('Import JSON'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'list',
+                child: ListTile(
+                  leading: Icon(Icons.view_list),
+                  title: Text('List'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'kanban',
+                child: ListTile(
+                  leading: Icon(Icons.view_kanban_outlined),
+                  title: Text('Kanban'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'cancelled',
+                child: ListTile(
+                  leading: Icon(Icons.cancel_outlined),
+                  title: Text('Cancelled'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'load-samples',
+                child: ListTile(
+                  leading: Icon(Icons.auto_awesome_outlined),
+                  title: Text('Load Sample Tasks'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _loadError.isNotEmpty
+          ? _LoadError(message: _loadError, onRetry: _initialize)
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: _buildWorkspace(theme),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildWorkspace(ThemeData theme) {
+    final draft = _quickDraft;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerLow,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.add_task),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _quickAddController,
+                          focusNode: _quickAddFocus,
+                          textInputAction: TextInputAction.done,
+                          decoration: const InputDecoration(
+                            hintText:
+                                'Add a task... try "Call Sam !high #work today"',
+                            border: InputBorder.none,
+                          ),
+                          onChanged: (_) => setState(() {}),
+                          onSubmitted: (_) => _addQuickTask(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: draft.title.isEmpty ? null : _addQuickTask,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add task'),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          'Preview',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        _PriorityPill(priority: draft.priority),
+                        _BucketPill(bucket: draft.bucket),
+                        ...draft.tags.map((tag) => _TagPill(tag: tag)),
+                        if (_quickAddController.text.trim().isEmpty)
+                          Text(
+                            'Use !high, !med, !low, #tags, today or tomorrow',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildFilters(theme),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _showKanban
+                ? _KanbanBoard(
+                    tasks: _visibleTasks,
+                    onOpen: _editTask,
+                    onMove: _moveTask,
+                  )
+                : _TaskList(
+                    tasks: _visibleTasks,
+                    onOpen: _editTask,
+                    onToggleCompletion: _toggleCompletion,
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilters(ThemeData theme) {
+    final tags = _tasks.expand((task) => task.tags).toSet().toList()..sort();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'list',
+                  icon: Icon(Icons.view_list),
+                  label: Text('List'),
+                ),
+                ButtonSegment(
+                  value: 'kanban',
+                  icon: Icon(Icons.view_kanban_outlined),
+                  label: Text('Kanban'),
+                ),
+                ButtonSegment(
+                  value: 'cancelled',
+                  icon: Icon(Icons.cancel_outlined),
+                  label: Text('Cancelled'),
+                ),
+              ],
+              selected: {_viewMode},
+              onSelectionChanged: (selection) =>
+                  setState(() => _viewMode = selection.first),
+            ),
+            SizedBox(
+              width: 240,
+              child: SearchBar(
+                leading: const Icon(Icons.search),
+                hintText: 'Search tasks',
+                elevation: const WidgetStatePropertyAll(0),
+                onChanged: (value) => setState(() => _search = value),
+              ),
+            ),
+            DropdownButton<Priority?>(
+              value: _priorityFilter,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(14),
+              items: const [
+                DropdownMenuItem<Priority?>(child: Text('Any priority')),
+                DropdownMenuItem(
+                  value: Priority.high,
+                  child: Text('High priority'),
+                ),
+                DropdownMenuItem(
+                  value: Priority.medium,
+                  child: Text('Medium priority'),
+                ),
+                DropdownMenuItem(
+                  value: Priority.low,
+                  child: Text('Low priority'),
+                ),
+              ],
+              onChanged: (value) => setState(() => _priorityFilter = value),
+            ),
+            if (_tasks.any((task) => task.isSample))
+              TextButton.icon(
+                onPressed: _clearSampleTasks,
+                icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                label: const Text('Clear sample data'),
+              ),
+          ],
+        ),
+        if (tags.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Text('Tags', style: theme.textTheme.labelMedium),
+                  const SizedBox(width: 6),
+                  ...tags.map(
+                    (tag) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: FilterChip(
+                        label: Text('#$tag'),
+                        selected: _tagFilters.contains(tag),
+                        onSelected: (selected) => setState(() {
+                          if (selected) {
+                            _tagFilters.add(tag);
+                          } else {
+                            _tagFilters.remove(tag);
+                          }
+                        }),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _LoadError extends StatelessWidget {
+  const _LoadError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 42),
+          const SizedBox(height: 12),
+          Text(message, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _TaskList extends StatelessWidget {
+  const _TaskList({
+    required this.tasks,
+    required this.onOpen,
+    required this.onToggleCompletion,
+  });
+
+  final List<TodoTask> tasks;
+  final ValueChanged<TodoTask> onOpen;
+  final ValueChanged<TodoTask> onToggleCompletion;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = [
+      (TaskBucket.today, 'Today', Icons.today_outlined),
+      (TaskBucket.upcoming, 'Upcoming', Icons.calendar_month_outlined),
+      (TaskBucket.completed, 'Completed', Icons.check_circle_outline),
+    ];
+    final wide = MediaQuery.of(context).size.width >= 900;
+    final sections = <Widget>[
+      for (final (bucket, title, icon) in groups)
+        _BucketSection(
+          bucket: bucket,
+          title: title,
+          icon: icon,
+          tasks: tasks.where((task) => task.bucket == bucket).toList(),
+          onOpen: onOpen,
+          onToggle: onToggleCompletion,
+        ),
+    ];
+    if (wide) {
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final section in sections) Expanded(child: section),
+            ],
+          ),
+        ],
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: sections,
+    );
+  }
+}
+
+class _BucketSection extends StatelessWidget {
+  const _BucketSection({
+    required this.bucket,
+    required this.title,
+    required this.icon,
+    required this.tasks,
+    required this.onOpen,
+    required this.onToggle,
+  });
+
+  final TaskBucket bucket;
+  final String title;
+  final IconData icon;
+  final List<TodoTask> tasks;
+  final ValueChanged<TodoTask> onOpen;
+  final ValueChanged<TodoTask> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(width: 8),
+              Text(
+                '${tasks.length}',
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ],
+          ),
+        ),
+        ...tasks.map(
+          (task) => _TaskCard(
+            task: task,
+            onTap: () => onOpen(task),
+            onToggle: () => onToggle(task),
+          ),
+        ),
+        if (tasks.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+            child: Text(
+              'No tasks here',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TaskCard extends StatelessWidget {
+  const _TaskCard({
+    required this.task,
+    required this.onTap,
+    required this.onToggle,
+  });
+
+  final TodoTask task;
+  final VoidCallback onTap;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final completed = task.bucket == TaskBucket.completed;
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      color: theme.colorScheme.surface,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Checkbox(value: completed, onChanged: (_) => onToggle()),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 8),
+                    Text(
+                      task.title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        decoration: completed
+                            ? TextDecoration.lineThrough
+                            : null,
+                        color: completed
+                            ? theme.colorScheme.onSurfaceVariant
+                            : null,
+                      ),
+                    ),
+                    if (task.notes.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        task.notes,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (task.tags.isNotEmpty || task.subtasks.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          ...task.tags.map((tag) => _TagPill(tag: tag)),
+                          if (task.subtasks.isNotEmpty)
+                            _ProgressPill(task: task),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 6, right: 4),
+                child: _PriorityPill(priority: task.priority),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _KanbanBoard extends StatelessWidget {
+  const _KanbanBoard({
+    required this.tasks,
+    required this.onOpen,
+    required this.onMove,
+  });
+
+  final List<TodoTask> tasks;
+  final ValueChanged<TodoTask> onOpen;
+  final void Function(TodoTask, KanbanColumn) onMove;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const minimumBoardWidth = 900.0;
+      final boardWidth = constraints.maxWidth < minimumBoardWidth
+          ? minimumBoardWidth
+          : constraints.maxWidth;
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: boardWidth,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final column in KanbanColumn.values)
+                Expanded(
+                  child: _KanbanLane(
+                    column: column,
+                    tasks: tasks
+                        .where((task) => task.kanbanColumn == column)
+                        .toList(),
+                    onOpen: onOpen,
+                    onMove: onMove,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _KanbanLane extends StatelessWidget {
+  const _KanbanLane({
+    required this.column,
+    required this.tasks,
+    required this.onOpen,
+    required this.onMove,
+  });
+
+  final KanbanColumn column;
+  final List<TodoTask> tasks;
+  final ValueChanged<TodoTask> onOpen;
+  final void Function(TodoTask, KanbanColumn) onMove;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = switch (column) {
+      KanbanColumn.toDo => 'To Do',
+      KanbanColumn.inProgress => 'In Progress',
+      KanbanColumn.done => 'Done',
+    };
+    final colors = Theme.of(context).colorScheme;
+    return DragTarget<TodoTask>(
+      onWillAcceptWithDetails: (details) => details.data.kanbanColumn != column,
+      onAcceptWithDetails: (details) => onMove(details.data, column),
+      builder: (context, candidates, rejected) => Container(
+        margin: const EdgeInsets.fromLTRB(6, 8, 6, 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: candidates.isEmpty
+              ? colors.surfaceContainerLow
+              : colors.primaryContainer,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: candidates.isEmpty ? colors.outlineVariant : colors.primary,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                const Spacer(),
+                CircleAvatar(
+                  radius: 13,
+                  backgroundColor: colors.surfaceContainerHighest,
+                  child: Text(
+                    '${tasks.length}',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: tasks.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.inbox_outlined,
+                            size: 40,
+                            color: colors.onSurfaceVariant,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No tasks here - drag a card or add one above',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: colors.onSurfaceVariant),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView(
+                      children: tasks
+                          .map(
+                            (task) => _KanbanCard(
+                              task: task,
+                              column: column,
+                              onOpen: () => onOpen(task),
+                              onMove: (next) => onMove(task, next),
+                            ),
+                          )
+                          .toList(),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KanbanCard extends StatelessWidget {
+  const _KanbanCard({
+    required this.task,
+    required this.column,
+    required this.onOpen,
+    required this.onMove,
+  });
+
+  final TodoTask task;
+  final KanbanColumn column;
+  final VoidCallback onOpen;
+  final ValueChanged<KanbanColumn> onMove;
+
+  @override
+  Widget build(BuildContext context) => LongPressDraggable<TodoTask>(
+    data: task,
+    feedback: Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: 250,
+        child: _KanbanCardContents(task: task, onOpen: onOpen),
+      ),
+    ),
+    childWhenDragging: Opacity(
+      opacity: 0.35,
+      child: _KanbanCardContents(task: task, onOpen: onOpen),
+    ),
+    child: _KanbanCardContents(
+      task: task,
+      onOpen: onOpen,
+      onMove: onMove,
+      column: column,
+    ),
+  );
+}
+
+class _KanbanCardContents extends StatelessWidget {
+  const _KanbanCardContents({
+    required this.task,
+    required this.onOpen,
+    this.onMove,
+    this.column,
+  });
+
+  final TodoTask task;
+  final VoidCallback onOpen;
+  final ValueChanged<KanbanColumn>? onMove;
+  final KanbanColumn? column;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    elevation: 0,
+    margin: const EdgeInsets.only(bottom: 8),
+    child: InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    task.title,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                _PriorityPill(priority: task.priority),
+              ],
+            ),
+            if (task.notes.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                task.notes,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (task.tags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 5,
+                runSpacing: 4,
+                children: task.tags.map((tag) => _TagPill(tag: tag)).toList(),
+              ),
+            ],
+            if (onMove != null && column != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (column!.index > 0)
+                    IconButton(
+                      tooltip: 'Move left',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () =>
+                          onMove!(KanbanColumn.values[column!.index - 1]),
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                  if (column!.index < KanbanColumn.values.length - 1)
+                    IconButton(
+                      tooltip: 'Move right',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () =>
+                          onMove!(KanbanColumn.values[column!.index + 1]),
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _PriorityPill extends StatelessWidget {
+  const _PriorityPill({required this.priority});
+
+  final Priority priority;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final (label, foreground, background) = switch (priority) {
+      Priority.high => ('High', colors.error, colors.errorContainer),
+      Priority.medium => ('Medium', colors.tertiary, colors.tertiaryContainer),
+      Priority.low => ('Low', colors.primary, colors.primaryContainer),
+    };
+    return _SmallPill(
+      label: label,
+      foreground: foreground,
+      background: background,
+      icon: Icons.flag_outlined,
+    );
+  }
+}
+
+class _BucketPill extends StatelessWidget {
+  const _BucketPill({required this.bucket});
+
+  final TaskBucket bucket;
+
+  @override
+  Widget build(BuildContext context) => _SmallPill(
+    label: bucket.name[0].toUpperCase() + bucket.name.substring(1),
+    foreground: Theme.of(context).colorScheme.primary,
+    background: Theme.of(context).colorScheme.primaryContainer,
+    icon: Icons.event_outlined,
+  );
+}
+
+class _TagPill extends StatelessWidget {
+  const _TagPill({required this.tag});
+
+  final String tag;
+
+  @override
+  Widget build(BuildContext context) => _SmallPill(
+    label: '#$tag',
+    foreground: Theme.of(context).colorScheme.onSurfaceVariant,
+    background: Theme.of(context).colorScheme.surfaceContainerHighest,
+  );
+}
+
+class _ProgressPill extends StatelessWidget {
+  const _ProgressPill({required this.task});
+
+  final TodoTask task;
+
+  @override
+  Widget build(BuildContext context) => _SmallPill(
+    label: '${task.completedSubtasks}/${task.subtasks.length}',
+    foreground: Theme.of(context).colorScheme.primary,
+    background: Theme.of(context).colorScheme.primaryContainer,
+    icon: Icons.checklist,
+  );
+}
+
+class _SmallPill extends StatelessWidget {
+  const _SmallPill({
+    required this.label,
+    required this.foreground,
+    required this.background,
+    this.icon,
+  });
+
+  final String label;
+  final Color foreground;
+  final Color background;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(24),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 13, color: foreground),
+          const SizedBox(width: 4),
+        ],
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall
+              ?.copyWith(color: foreground),
+        ),
+      ],
+    ),
+  );
+}
+
+class _EditorResult {
+  const _EditorResult.saved(this.task) : deleted = false;
+  const _EditorResult.deleted() : task = null, deleted = true;
+
+  final TodoTask? task;
+  final bool deleted;
+}
+
+class _TaskEditor extends StatefulWidget {
+  const _TaskEditor({required this.task});
+
+  final TodoTask task;
+
+  @override
+  State<_TaskEditor> createState() => _TaskEditorState();
+}
+
+class _TaskEditorState extends State<_TaskEditor> {
+  final _formKey = GlobalKey<FormState>();
+  late final _titleController = TextEditingController(text: widget.task.title);
+  late final _notesController = TextEditingController(text: widget.task.notes);
+  late final _tagsController = TextEditingController(
+    text: widget.task.tags.map((tag) => '#$tag').join(' '),
+  );
+  final _subtaskController = TextEditingController();
+  late Priority _priority = widget.task.priority;
+  late TaskBucket _bucket = widget.task.bucket;
+  late KanbanColumn _column = widget.task.kanbanColumn;
+  late List<Subtask> _subtasks = [...widget.task.subtasks];
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _notesController.dispose();
+    _tagsController.dispose();
+    _subtaskController.dispose();
+    super.dispose();
+  }
+
+  void _addSubtask() {
+    final title = _subtaskController.text.trim();
+    if (title.isEmpty) return;
+    setState(() {
+      _subtasks.add(
+        Subtask(
+          id: '${widget.task.id}-sub-${DateTime.now().microsecondsSinceEpoch}',
+          title: title,
+        ),
+      );
+      _subtaskController.clear();
+    });
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    final tags = _tagsController.text
+        .split(RegExp(r'[\s,]+'))
+        .map((tag) => tag.replaceFirst(RegExp(r'^#'), '').toLowerCase())
+        .where((tag) => tag.isNotEmpty)
+        .toSet()
+        .toList();
+    Navigator.pop(
+      context,
+      _EditorResult.saved(
+        widget.task.copyWith(
+          title: _titleController.text.trim(),
+          notes: _notesController.text.trim(),
+          priority: _priority,
+          bucket: _bucket,
+          kanbanColumn: _column,
+          tags: tags,
+          subtasks: List.unmodifiable(_subtasks),
+          updatedAt: DateTime.now().toUtc(),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Task details',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Delete task',
+                  onPressed: () =>
+                      Navigator.pop(context, const _EditorResult.deleted()),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+            Expanded(
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  children: [
+                    TextFormField(
+                      controller: _titleController,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Title',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Add a task title'
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _notesController,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _tagsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Tags',
+                        hintText: '#work #home',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<Priority>(
+                      initialValue: _priority,
+                      decoration: const InputDecoration(
+                        labelText: 'Priority',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: Priority.values
+                          .map(
+                            (priority) => DropdownMenuItem(
+                              value: priority,
+                              child: Text(_priorityName(priority)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) setState(() => _priority = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<TaskBucket>(
+                      initialValue: _bucket,
+                      decoration: const InputDecoration(
+                        labelText: 'List section',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: TaskBucket.values
+                          .map(
+                            (bucket) => DropdownMenuItem(
+                              value: bucket,
+                              child: Text(_bucketName(bucket)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            _bucket = value;
+                            if (value == TaskBucket.completed) {
+                              _column = KanbanColumn.done;
+                            }
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<KanbanColumn>(
+                      initialValue: _column,
+                      decoration: const InputDecoration(
+                        labelText: 'Kanban column',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: KanbanColumn.values
+                          .map(
+                            (column) => DropdownMenuItem(
+                              value: column,
+                              child: Text(_columnName(column)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            _column = value;
+                            if (value == KanbanColumn.done) {
+                              _bucket = TaskBucket.completed;
+                            } else if (_bucket == TaskBucket.completed) {
+                              _bucket = TaskBucket.upcoming;
+                            }
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Subtasks',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    for (final subtask in _subtasks)
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: subtask.isDone,
+                            onChanged: (value) => setState(() {
+                              _subtasks = [
+                                for (final item in _subtasks)
+                                  if (item.id == subtask.id)
+                                    item.copyWith(isDone: value ?? false)
+                                  else
+                                    item,
+                              ];
+                            }),
+                          ),
+                          Expanded(
+                            child: Text(
+                              subtask.title,
+                              style: subtask.isDone
+                                  ? const TextStyle(
+                                      decoration: TextDecoration.lineThrough,
+                                    )
+                                  : null,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Remove subtask',
+                            onPressed: () => setState(
+                              () => _subtasks.removeWhere(
+                                (item) => item.id == subtask.id,
+                              ),
+                            ),
+                            icon: const Icon(Icons.close, size: 18),
+                          ),
+                        ],
+                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _subtaskController,
+                            decoration: const InputDecoration(
+                              hintText: 'Add a subtask',
+                            ),
+                            onSubmitted: (_) => _addSubtask(),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Add subtask',
+                          onPressed: _addSubtask,
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: _save, child: const Text('Save')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _ImportDialog extends StatefulWidget {
+  const _ImportDialog();
+
+  @override
+  State<_ImportDialog> createState() => _ImportDialogState();
+}
+
+class _ImportDialogState extends State<_ImportDialog> {
+  final _controller = TextEditingController();
+  String? _mode; // 'merge' | 'replace'
+  String? _fileError;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFile() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _controller.text = utf8.decode(bytes);
+        _fileError = null;
+      });
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() => _fileError = 'Could not open file: $error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Import backup'),
+    content: SizedBox(
+      width: 560,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+          Text(
+            'Paste a Minido JSON backup or choose a .json file.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _loadFile,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Choose JSON file'),
+          ),
+          if (_fileError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _fileError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'merge',
+                label: Text('Merge with current list'),
+              ),
+              ButtonSegment(
+                value: 'replace',
+                label: Text('Replace all tasks'),
+              ),
+            ],
+            selected: {_mode ?? 'merge'},
+            onSelectionChanged: (selection) =>
+                setState(() => _mode = selection.first),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _controller,
+            minLines: 8,
+            maxLines: 12,
+            decoration: const InputDecoration(
+              hintText: '{ "version": 1, "tasks": [...] }',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(
+          context,
+          _ImportResult(_controller.text, _mode == 'replace'),
+        ),
+        child: const Text('Restore backup'),
+      ),
+    ],
+  );
+}
+
+String _priorityName(Priority priority) => switch (priority) {
+  Priority.high => 'High',
+  Priority.medium => 'Medium',
+  Priority.low => 'Low',
+};
+
+String _bucketName(TaskBucket bucket) => switch (bucket) {
+  TaskBucket.today => 'Today',
+  TaskBucket.upcoming => 'Upcoming',
+  TaskBucket.completed => 'Completed',
+};
+
+String _columnName(KanbanColumn column) => switch (column) {
+  KanbanColumn.toDo => 'To Do',
+  KanbanColumn.inProgress => 'In Progress',
+  KanbanColumn.done => 'Done',
+};
+
+class _ImportResult {
+  const _ImportResult(this.source, this.replaceAll);
+  final String source;
+  final bool replaceAll;
+}
+
+List<TodoTask> _parseImportedTasks(String source) {
+  final decoded = jsonDecode(source);
+  if (decoded is! Map) {
+    throw const FormatException('The import must be a JSON object.');
+  }
+  final tasksValue = decoded['tasks'];
+  if (tasksValue is! List) {
+    throw const FormatException('The import must contain a tasks array.');
+  }
+  return tasksValue.map((task) => TodoTask.fromJson(task)).toList();
+}
+
+Widget _buildCancelledTasks() {
+    final cancelled = _tasks.where((task) => task.isCancelled).toList();
+    if (cancelled.isEmpty) {
+      return const Center(
+        child: Text('No cancelled tasks'),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        for (final task in cancelled)
+          _CancelledTaskCard(
+            task: task,
+            onRestore: () => _uncancelTask(task),
+            onShowMessage: _showMessage,
+            formatDateTime: _formatDateTime,
+          ),
+      ],
+    );
+}
+
+

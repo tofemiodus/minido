@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'models/task_models.dart';
 import 'data/task_store.dart';
+import 'services/pwa_install.dart';
 
 part 'src/views/task_views.dart';
 part 'src/views/statistics_view.dart';
@@ -168,6 +170,36 @@ class _MinidoAppState extends State<MinidoApp> {
               : SnackBarAction(label: action, onPressed: onAction!),
         ),
       );
+  }
+
+  void _installApp() {
+    if (!kIsWeb) return;
+    if (canPromptInstall) {
+      triggerInstallPrompt();
+      return;
+    }
+    unawaited(_showAddToHomeScreenGuide());
+  }
+
+  Future<void> _showAddToHomeScreenGuide() async {
+    await showDialog<void>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Minido to Home Screen'),
+        content: const Text(
+          'iOS Safari: Tap Share, then Add to Home Screen.\n\n'
+          'Android Chrome: Open menu ⋮, then choose Install app or Add to home screen.\n\n'
+          'Desktop browsers: Select the install icon in the address bar.\n\n'
+          'Use JSON Export and Smart Merge to transfer tasks between the browser and installed app.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showQuickAddConfirmation() async {
@@ -651,66 +683,79 @@ class _MinidoAppState extends State<MinidoApp> {
                   setState(() => _viewMode = 'statistics');
                 case 'load-samples':
                   _loadSampleTasks();
+                case 'install':
+                  _installApp();
               }
             },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 'export',
-                child: ListTile(
-                  leading: Icon(Icons.download_outlined),
-                  title: Text('Export JSON'),
-                  contentPadding: EdgeInsets.zero,
+            itemBuilder: (context) => [
+              if (kIsWeb && !isStandalonePwa)
+                const PopupMenuItem(
+                  value: 'install',
+                  child: ListTile(
+                    leading: Icon(Icons.install_mobile),
+                    title: Text('Install App'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'import',
-                child: ListTile(
-                  leading: Icon(Icons.upload_file_outlined),
-                  title: Text('Import JSON'),
-                  contentPadding: EdgeInsets.zero,
+              ...const [
+                PopupMenuItem(
+                  value: 'export',
+                  child: ListTile(
+                    leading: Icon(Icons.download_outlined),
+                    title: Text('Export JSON'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'list',
-                child: ListTile(
-                  leading: Icon(Icons.view_list),
-                  title: Text('List'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'import',
+                  child: ListTile(
+                    leading: Icon(Icons.upload_file_outlined),
+                    title: Text('Import JSON'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'kanban',
-                child: ListTile(
-                  leading: Icon(Icons.view_kanban_outlined),
-                  title: Text('Kanban'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'list',
+                  child: ListTile(
+                    leading: Icon(Icons.view_list),
+                    title: Text('List'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'cancelled',
-                child: ListTile(
-                  leading: Icon(Icons.cancel_outlined),
-                  title: Text('Cancelled'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'kanban',
+                  child: ListTile(
+                    leading: Icon(Icons.view_kanban_outlined),
+                    title: Text('Kanban'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'statistics',
-                child: ListTile(
-                  leading: Icon(Icons.bar_chart_outlined),
-                  title: Text('Statistics'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'cancelled',
+                  child: ListTile(
+                    leading: Icon(Icons.cancel_outlined),
+                    title: Text('Cancelled'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'load-samples',
-                child: ListTile(
-                  leading: Icon(Icons.auto_awesome_outlined),
-                  title: Text('Load Sample Tasks'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'statistics',
+                  child: ListTile(
+                    leading: Icon(Icons.bar_chart_outlined),
+                    title: Text('Statistics'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
+                PopupMenuItem(
+                  value: 'load-samples',
+                  child: ListTile(
+                    leading: Icon(Icons.auto_awesome_outlined),
+                    title: Text('Load Sample Tasks'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(width: 8),

@@ -33,6 +33,15 @@ Tasks are stored locally on the device or in that browser's storage; there is
 no account or cloud sync. Use **Export JSON** in the app to back up or move
 tasks between devices or browser addresses.
 
+### Install the Web app
+
+Open the Web app over HTTPS or from `http://localhost`, then choose **Install
+App** from the overflow menu. If the browser does not offer a native install
+prompt, follow the in-app steps: Safari on iOS uses **Share → Add to Home
+Screen**; Chrome on Android uses **Install app** or **Add to home screen**;
+desktop browsers use the install icon in the address bar. JSON Export and
+Smart Merge can transfer tasks between the browser and installed app.
+
 ## Run and validate
 
 ```shell

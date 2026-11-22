@@ -646,6 +646,12 @@ class _MinidoAppState extends State<MinidoApp> {
                 ),
               ),
             ),
+          if (kIsWeb && !isStandalonePwa)
+            TextButton.icon(
+              onPressed: _installApp,
+              icon: const Icon(Icons.install_mobile),
+              label: const Text('Install App'),
+            ),
           IconButton(
             tooltip: _themeMode == ThemeMode.dark
                 ? 'Switch to light theme'
@@ -683,79 +689,66 @@ class _MinidoAppState extends State<MinidoApp> {
                   setState(() => _viewMode = 'statistics');
                 case 'load-samples':
                   _loadSampleTasks();
-                case 'install':
-                  _installApp();
               }
             },
-            itemBuilder: (context) => [
-              if (kIsWeb && !isStandalonePwa)
-                const PopupMenuItem(
-                  value: 'install',
-                  child: ListTile(
-                    leading: Icon(Icons.install_mobile),
-                    title: Text('Install App'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.download_outlined),
+                  title: Text('Export JSON'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-              ...const [
-                PopupMenuItem(
-                  value: 'export',
-                  child: ListTile(
-                    leading: Icon(Icons.download_outlined),
-                    title: Text('Export JSON'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuItem(
+                value: 'import',
+                child: ListTile(
+                  leading: Icon(Icons.upload_file_outlined),
+                  title: Text('Import JSON'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuItem(
-                  value: 'import',
-                  child: ListTile(
-                    leading: Icon(Icons.upload_file_outlined),
-                    title: Text('Import JSON'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'list',
+                child: ListTile(
+                  leading: Icon(Icons.view_list),
+                  title: Text('List'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'list',
-                  child: ListTile(
-                    leading: Icon(Icons.view_list),
-                    title: Text('List'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuItem(
+                value: 'kanban',
+                child: ListTile(
+                  leading: Icon(Icons.view_kanban_outlined),
+                  title: Text('Kanban'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuItem(
-                  value: 'kanban',
-                  child: ListTile(
-                    leading: Icon(Icons.view_kanban_outlined),
-                    title: Text('Kanban'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuItem(
+                value: 'cancelled',
+                child: ListTile(
+                  leading: Icon(Icons.cancel_outlined),
+                  title: Text('Cancelled'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuItem(
-                  value: 'cancelled',
-                  child: ListTile(
-                    leading: Icon(Icons.cancel_outlined),
-                    title: Text('Cancelled'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuItem(
+                value: 'statistics',
+                child: ListTile(
+                  leading: Icon(Icons.bar_chart_outlined),
+                  title: Text('Statistics'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuItem(
-                  value: 'statistics',
-                  child: ListTile(
-                    leading: Icon(Icons.bar_chart_outlined),
-                    title: Text('Statistics'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              ),
+              PopupMenuItem(
+                value: 'load-samples',
+                child: ListTile(
+                  leading: Icon(Icons.auto_awesome_outlined),
+                  title: Text('Load Sample Tasks'),
+                  contentPadding: EdgeInsets.zero,
                 ),
-                PopupMenuItem(
-                  value: 'load-samples',
-                  child: ListTile(
-                    leading: Icon(Icons.auto_awesome_outlined),
-                    title: Text('Load Sample Tasks'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
+              ),
             ],
           ),
           const SizedBox(width: 8),

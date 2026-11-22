@@ -16,6 +16,23 @@ The app has no account, cloud sync, or backend service.
   the native platform share sheet. Backups can be restored by pasting JSON or
   choosing a `.json` file.
 
+## Download and run
+
+Download the Windows or Web package from the
+[latest release](https://github.com/tofemiodus/minido/releases/latest).
+
+- **Windows 10/11 (x64):** Download and extract the Windows x64 ZIP, then run
+  `minido.exe` from the extracted folder. Keep the included `data`
+  folder and DLL files beside the executable.
+- **Web:** Download and extract the Web ZIP. From the extracted folder, run
+  `python -m http.server 8000`, then open
+  `http://localhost:8000` in a modern browser. Serve the folder over HTTP;
+  opening `index.html` directly as a file is not supported.
+
+Tasks are stored locally on the device or in that browser's storage; there is
+no account or cloud sync. Use **Export JSON** in the app to back up or move
+tasks between devices or browser addresses.
+
 ## Run and validate
 
 ```shell

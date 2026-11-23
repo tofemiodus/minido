@@ -182,21 +182,135 @@ class _MinidoAppState extends State<MinidoApp> {
   }
 
   Future<void> _showAddToHomeScreenGuide() async {
+    final canInstallNow = kIsWeb && canPromptInstall;
     await showDialog<void>(
       context: _navigatorKey.currentContext!,
       builder: (context) => AlertDialog(
-        title: const Text('Add Minido to Home Screen'),
-        content: const Text(
-          'iOS Safari: Tap Share, then Add to Home Screen.\n\n'
-          'Android Chrome: Open menu ⋮, then choose Install app or Add to home screen.\n\n'
-          'Desktop browsers: Select the install icon in the address bar.\n\n'
-          'Use JSON Export and Smart Merge to transfer tasks between the browser and installed app.',
+        title: const Text('Install Minido / Add to Home Screen'),
+        content: SizedBox(
+          width: 620,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (canInstallNow)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: FilledButton.icon(
+                      onPressed: triggerInstallPrompt,
+                      icon: const Icon(Icons.install_mobile),
+                      label: const Text('Install Now (1-Tap)'),
+                    ),
+                  ),
+                _installGuideSection(
+                  context,
+                  'Android',
+                  'Chrome, Edge, Brave — Android 8+',
+                  const [
+                    'Open Minido in Chrome, Edge, or Brave.',
+                    'Tap the three-dot menu (\u22ee) in the top-right corner.',
+                    'Tap Add to home screen -> choose Install (or tap Install app directly).',
+                    'Confirm Install — Minido appears in your app drawer as a full-screen app (or download the direct .apk from GitHub Releases if sideloading).',
+                  ],
+                ),
+                _installGuideSection(
+                  context,
+                  'iPhone & iPad',
+                  'Safari — iOS 16.4+ / iPadOS 16.4+ & iOS 18+',
+                  const [
+                    'Open Minido in Safari. Apple restricts Home Screen web apps primarily to Safari; on iOS 16.4+, third-party browsers must also use the Share sheet.',
+                    'Tap the Share button (square with an upward arrow \u238b at the bottom bar on iPhone, or top-right on iPad).',
+                    'Scroll down the action list and tap Add to Home Screen.',
+                    'Verify the name is Minido and tap Add in the top-right corner.',
+                  ],
+                ),
+                _installGuideSection(
+                  context,
+                  'Windows',
+                  'Windows 10 & Windows 11 — Chrome, Edge, Brave',
+                  const [
+                    'Open Minido in Microsoft Edge or Google Chrome.',
+                    'Click the Install icon (monitor with a down arrow or + inside a circle) on the right side of the address bar.',
+                    'Or open the browser menu (\u22ef in Edge / \u22ee in Chrome) -> Apps -> Install this site as an app.',
+                    'Click Install — you can pin Minido to your Windows Taskbar or Start Menu.',
+                  ],
+                ),
+                _installGuideSection(
+                  context,
+                  'macOS',
+                  'Sonoma 14+, Sequoia 15+, Tahoe 26+',
+                  const [
+                    'Safari (macOS 14 Sonoma or newer): Click File in the top macOS menu bar -> Add to Dock... -> click Add.',
+                    'Chrome / Edge / Brave (macOS 11+): Click the Install icon in the right side of the address bar, or menu \u22ee -> Cast, save, and share -> Install page as app...',
+                  ],
+                ),
+                _installGuideSection(
+                  context,
+                  'Linux',
+                  'Ubuntu, Fedora, Arch, Mint — Chrome, Chromium, Brave, Edge',
+                  const [
+                    'Open Minido in Chrome, Chromium, Brave, or Edge. Standard desktop Firefox does not support standalone PWA installation natively without an extension.',
+                    'Click the Install icon in the address bar, or open menu (\u22ee) -> Cast, save, and share -> Install Minido...',
+                    'Click Install — Minido creates a .desktop launcher entry in your system application menu.',
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'Local-First Storage Tip: Each browser and installed app keeps its own private storage. To move your tasks after installing, export a .json backup from the browser and Smart-Merge it into the installed app.',
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
         actions: [
           FilledButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Done'),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _installGuideSection(
+    BuildContext context,
+    String title,
+    String subtitle,
+    List<String> steps,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          for (var i = 0; i < steps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: Text(
+                      '${i + 1}.',
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  Expanded(child: Text(steps[i])),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -675,6 +789,8 @@ class _MinidoAppState extends State<MinidoApp> {
             icon: const Icon(Icons.more_vert),
             onSelected: (choice) {
               switch (choice) {
+                case 'install-help':
+                  unawaited(_showAddToHomeScreenGuide());
                 case 'export':
                   unawaited(_showExportDialog());
                 case 'import':
@@ -692,6 +808,15 @@ class _MinidoAppState extends State<MinidoApp> {
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'install-help',
+                child: ListTile(
+                  leading: Icon(Icons.install_desktop),
+                  title: Text('Install on Other Devices'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuDivider(),
               PopupMenuItem(
                 value: 'export',
                 child: ListTile(

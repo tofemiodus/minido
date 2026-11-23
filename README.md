@@ -18,9 +18,16 @@ The app has no account, cloud sync, or backend service.
 
 ## Download and run
 
-Download the Windows or Web package from the
+Download the Android, Windows, or Web package from the
 [latest release](https://github.com/tofemiodus/minido/releases/latest).
 
+- **Android:** Download `app-arm64-v8a-release.apk` for virtually every modern
+  phone (2018 and newer). Open the downloaded APK and confirm Install. Some
+  browsers or Android settings may ask you to allow installs from that app;
+  allow it only for the browser or file manager used to open the APK. Android
+  updates with a Minido package use the same file and package name.
+- **Android older ARM devices:** Download `app-armeabi-v7a-release.apk`.
+- **Android emulators / x86 devices:** Download `app-x86_64-release.apk`.
 - **Windows 10/11 (x64):** Download and extract the Windows x64 ZIP, then run
   `minido.exe` from the extracted folder. Keep the included `data`
   folder and DLL files beside the executable.

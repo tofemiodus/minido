@@ -37,6 +37,12 @@ jobs:
       - name: Build split release APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/app/outputs/symbols
 
+      - name: Build WebAssembly PWA
+        run: flutter build web --wasm
+
+      - name: Package WebAssembly PWA
+        run: zip -r Minido-web-wasm.zip build/web
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -44,3 +50,4 @@ jobs:
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             build/app/outputs/flutter-apk/app-x86_64-release.apk
+            Minido-web-wasm.zip

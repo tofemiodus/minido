@@ -744,7 +744,11 @@ class _MinidoAppState extends State<MinidoApp> {
         title: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_circle_rounded, color: Color(0xFF5266D7)),
+            Image(
+              image: AssetImage('assets/brand/minido_logo.png'),
+              width: 28,
+              height: 28,
+            ),
             SizedBox(width: 10),
             Text('Minido'),
           ],

@@ -37,5 +37,5 @@ jobs:
       - name: Upload Windows package
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.2
+          tag_name: ${{ github.ref_name }}
           files: Minido-Windows-x64.zip

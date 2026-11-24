@@ -28,13 +28,14 @@ Download the Android, Windows, or Web package from the
   updates with a Minido package use the same file and package name.
 - **Android older ARM devices:** Download `app-armeabi-v7a-release.apk`.
 - **Android emulators / x86 devices:** Download `app-x86_64-release.apk`.
-- **Windows 10/11 (x64):** Download and extract the Windows x64 ZIP, then run
-  `minido.exe` from the extracted folder. Keep the included `data`
-  folder and DLL files beside the executable.
-- **Web:** Download and extract the Web ZIP. From the extracted folder, run
-  `python -m http.server 8000`, then open
-  `http://localhost:8000` in a modern browser. Serve the folder over HTTP;
-  opening `index.html` directly as a file is not supported.
+- **Windows 10/11 (x64):** Download `Minido-Windows-x64.zip`, open it in File
+  Explorer, select **Extract All**, then open the extracted folder and
+  double-click `minido.exe`. Keep the included `data` folder and DLL files
+  beside the executable.
+- **Web/PWA:** Open the hosted Minido website over HTTPS and use the browser's
+  **Install** option or Minido's **Install App** guide. The WebAssembly ZIP in
+  the release is for publishing Minido to a web host; it is not a desktop
+  installer and cannot be launched by opening `index.html` directly.
 
 Tasks are stored locally on the device or in that browser's storage; there is
 no account or cloud sync. Use **Export JSON** in the app to back up or move

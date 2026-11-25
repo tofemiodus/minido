@@ -166,7 +166,7 @@ jobs:
 
       - name: Package macOS app
         run: |
-          cp -R build/macos/Build/Products/Release/Runner.app Minido.app
+          ditto build/macos/Build/Products/Release/minido.app Minido.app
           ditto -c -k --sequesterRsrc --keepParent \
             Minido.app Minido-macOS.zip
 

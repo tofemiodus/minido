@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Minido
+Comment=Offline-first personal to-do app
+Exec=/opt/minido/minido
+Icon=minido
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true

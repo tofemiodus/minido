@@ -1,0 +1,9 @@
+Package: minido
+Version: @APP_VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Minido maintainers
+Depends: libgtk-3-0, libstdc++6, libgcc-s1, liblzma5
+Description: Offline-first personal to-do app
+ Minido stores tasks privately on your device.

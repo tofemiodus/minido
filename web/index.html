@@ -19,6 +19,7 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Offline-first personal task manager with zero backend">
+  <meta name="theme-color" content="#5269D8">
 
   <!--
     Uncomment the tag below to lay the app out underneath the parts of the
@@ -49,6 +50,7 @@
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
       deferredInstallPrompt = event;
+      window.dispatchEvent(new Event('minido-install-prompt-available'));
     });
     window.canPromptInstall = () => deferredInstallPrompt !== null;
     window.triggerInstallPrompt = async () => {
@@ -60,6 +62,24 @@
     window.isStandalonePwa = () =>
       window.matchMedia('(display-mode: standalone)').matches ||
       window.navigator.standalone === true;
+
+    window.isIosSafari = () => {
+      const ua = navigator.userAgent || '';
+      const platform = navigator.platform || '';
+      const isIosDevice =
+        /iPad|iPhone|iPod/.test(ua) ||
+        (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      return isIosDevice && /WebKit/.test(ua);
+    };
+
+    window.persistStorage = async () => {
+      if (!navigator.storage || !navigator.storage.persist) return false;
+      try {
+        return await navigator.storage.persist();
+      } catch (_) {
+        return false;
+      }
+    };
   </script>
 </head>
 <body>

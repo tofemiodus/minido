@@ -1,0 +1,29 @@
+pkgname=minido-bin
+pkgver=@APP_VERSION@
+pkgrel=1
+pkgdesc='Offline-first personal to-do app'
+arch=('x86_64')
+url='https://github.com/@REPOSITORY@'
+license=('unknown')
+depends=('gtk3' 'gcc-libs' 'xz')
+source=("Minido-Linux-x64.tar.gz::https://github.com/@REPOSITORY@/releases/download/v@APP_VERSION@/Minido-Linux-x64.tar.gz")
+sha256sums=('@APP_SHA256@')
+
+package() {
+  install -dm755 "$pkgdir/opt/minido"
+  cp -a "$srcdir/Minido-Linux-x64/." "$pkgdir/opt/minido/"
+  install -Dm644 "$srcdir/Minido-Linux-x64/data/flutter_assets/assets/brand/minido_logo.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/minido.png"
+  install -dm755 "$pkgdir/usr/share/applications"
+  cat > "$pkgdir/usr/share/applications/minido.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Minido
+Comment=Offline-first personal to-do app
+Exec=/opt/minido/minido
+Icon=minido
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true
+DESKTOP
+}

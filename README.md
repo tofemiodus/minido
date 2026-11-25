@@ -18,14 +18,16 @@ The app has no account, cloud sync, or backend service.
 
 ## Download and run
 
-Download the Android, Windows, or Web package from the
+Download the package for your device from the
 [latest release](https://github.com/tofemiodus/minido/releases/latest).
 
 - **Android:** Download `app-arm64-v8a-release.apk` for virtually every modern
   phone (2018 and newer). Open the downloaded APK and confirm Install. Some
   browsers or Android settings may ask you to allow installs from that app;
-  allow it only for the browser or file manager used to open the APK. Android
-  updates with a Minido package use the same file and package name.
+  allow it only for the browser or file manager used to open the APK. Before
+  reinstalling a newer release, export a JSON backup; this build uses debug
+  signing, so Android may require removing the old app before installing the
+  new one.
 - **Android older ARM devices:** Download `app-armeabi-v7a-release.apk`.
 - **Android emulators / x86 devices:** Download `app-x86_64-release.apk`.
 - **Windows 10/11 (x64):** Download `Minido-Windows-x64.zip`, open it in File
@@ -36,6 +38,18 @@ Download the Android, Windows, or Web package from the
   **Install** option or Minido's **Install App** guide. The WebAssembly ZIP in
   the release is for publishing Minido to a web host; it is not a desktop
   installer and cannot be launched by opening `index.html` directly.
+- **Linux (Debian/Ubuntu):** Download `minido_amd64.deb` and open it with your
+  software installer. On Fedora-compatible systems, use `minido-x86_64.rpm`.
+  `Minido-Linux-x64.tar.gz` is the portable Linux bundle. Arch users can use
+  the included `PKGBUILD` with an AUR/package helper.
+- **macOS:** Download `Minido-macOS.zip`, open it, then move `Minido.app` to
+  Applications. macOS may ask you to confirm opening an app downloaded from
+  the internet. This build targets the architecture of the macOS release
+  runner; it is not advertised as a universal binary.
+- **iPhone/iPad:** `Minido-iOS-unsigned.ipa` is for users who already use an
+  iOS sideloading tool such as AltStore or SideStore. It is unsigned and is not
+  a normal App Store install; sideloading requires Apple device signing and
+  periodic re-signing.
 
 Tasks are stored locally on the device or in that browser's storage; there is
 no account or cloud sync. Use **Export JSON** in the app to back up or move
@@ -43,12 +57,12 @@ tasks between devices or browser addresses.
 
 ### Install the Web app
 
-Open the Web app over HTTPS or from `http://localhost`, then choose **Install
-App** from the overflow menu. If the browser does not offer a native install
-prompt, follow the in-app steps: Safari on iOS uses **Share → Add to Home
-Screen**; Chrome on Android uses **Install app** or **Add to home screen**;
-desktop browsers use the install icon in the address bar. JSON Export and
-Smart Merge can transfer tasks between the browser and installed app.
+Open the Web app over HTTPS or from `http://localhost`. Minido shows a
+dismissible install banner when the browser supports installation; Chromium
+offers a one-tap install button, while iPhone/iPad Safari shows the **Share →
+Add to Home Screen** hint. Choose **How?** for the step-by-step guide, or
+**Install on Other Devices** in an installed app. JSON Export and Smart Merge
+can transfer tasks between the browser and installed app.
 
 ## Run and validate
 

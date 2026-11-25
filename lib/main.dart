@@ -32,6 +32,7 @@ class _MinidoAppState extends State<MinidoApp> {
   final _quickAddFocus = FocusNode();
   final _quickAddController = TextEditingController();
   late final TaskStore _store = widget.store ?? SharedPreferencesTaskStore();
+  VoidCallback? _removeInstallPromptListener;
 
   List<TodoTask> _tasks = const [];
   ThemeMode _themeMode = ThemeMode.light;
@@ -40,6 +41,11 @@ class _MinidoAppState extends State<MinidoApp> {
   String _search = '';
   String _loadError = '';
   bool _isLoading = true;
+  bool _isIosSafari = false;
+  bool _storagePersisted = false;
+  bool _dismissedInstallBanner = false;
+  bool _isFirstLaunch = false;
+  bool _dismissedWelcomeCard = false;
   bool _isSaving = false;
   int _pendingWrites = 0;
   Future<void> _writeQueue = Future<void>.value();
@@ -53,6 +59,13 @@ class _MinidoAppState extends State<MinidoApp> {
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) {
+      _removeInstallPromptListener = listenForInstallPrompt(() {
+        if (mounted && !_dismissedInstallBanner && !isStandalonePwa) {
+          setState(() {});
+        }
+      });
+    }
     unawaited(_initialize());
   }
 
@@ -60,6 +73,7 @@ class _MinidoAppState extends State<MinidoApp> {
   void dispose() {
     _quickAddFocus.dispose();
     _quickAddController.dispose();
+    _removeInstallPromptListener?.call();
     super.dispose();
   }
 
@@ -75,8 +89,14 @@ class _MinidoAppState extends State<MinidoApp> {
           : BackupDocument.fromJsonString(saved);
       if (saved == null) await _store.write(document.toPrettyJson());
       if (!mounted) return;
+      if (kIsWeb) {
+        _isIosSafari = isIosSafari;
+        _storagePersisted = await persistStorage();
+        if (!mounted) return;
+      }
       setState(() {
         _tasks = document.tasks;
+        _isFirstLaunch = saved == null;
         _themeMode = document.themeMode == 'dark'
             ? ThemeMode.dark
             : ThemeMode.light;
@@ -170,15 +190,6 @@ class _MinidoAppState extends State<MinidoApp> {
               : SnackBarAction(label: action, onPressed: onAction!),
         ),
       );
-  }
-
-  void _installApp() {
-    if (!kIsWeb) return;
-    if (canPromptInstall) {
-      triggerInstallPrompt();
-      return;
-    }
-    unawaited(_showAddToHomeScreenGuide());
   }
 
   Future<void> _showAddToHomeScreenGuide() async {
@@ -764,12 +775,7 @@ class _MinidoAppState extends State<MinidoApp> {
                 ),
               ),
             ),
-          if (kIsWeb && !isStandalonePwa)
-            TextButton.icon(
-              onPressed: _installApp,
-              icon: const Icon(Icons.install_mobile),
-              label: const Text('Install App'),
-            ),
+          if (kIsWeb) _offlineReadyPill(),
           IconButton(
             tooltip: _themeMode == ThemeMode.dark
                 ? 'Switch to light theme'
@@ -811,16 +817,16 @@ class _MinidoAppState extends State<MinidoApp> {
                   _loadSampleTasks();
               }
             },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 'install-help',
-                child: ListTile(
-                  leading: Icon(Icons.install_desktop),
-                  title: Text('Install on Other Devices'),
-                  contentPadding: EdgeInsets.zero,
+            itemBuilder: (context) => [
+              if (kIsWeb && isStandalonePwa)
+                const PopupMenuItem(
+                  value: 'install-help',
+                  child: ListTile(
+                    leading: Icon(Icons.install_desktop),
+                    title: Text('Install on Other Devices'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuDivider(),
               PopupMenuItem(
                 value: 'export',
                 child: ListTile(
@@ -887,12 +893,184 @@ class _MinidoAppState extends State<MinidoApp> {
           ? const Center(child: CircularProgressIndicator())
           : _loadError.isNotEmpty
           ? _LoadError(message: _loadError, onRetry: _initialize)
-          : Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1120),
-                child: _buildWorkspace(theme),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_isFirstLaunch && !_dismissedWelcomeCard)
+                  _firstRunWelcomeCard(),
+                if (kIsWeb && !isStandalonePwa && !_dismissedInstallBanner)
+                  _installBanner(),
+                Expanded(
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1120),
+                      child: _buildWorkspace(theme),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _offlineReadyPill() {
+    if (!_storagePersisted) return const SizedBox.shrink();
+    return Tooltip(
+      message: 'Offline Ready — your tasks are saved on this device',
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.green.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: const BoxDecoration(
+                color: Colors.green,
+                shape: BoxShape.circle,
               ),
             ),
+            const SizedBox(width: 6),
+            const Text(
+              'Offline Ready',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.green,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _firstRunWelcomeCard() {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.waving_hand_outlined, color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Welcome to Minido! Add a task above, or try !high, #work, today, or tomorrow. Your tasks stay private on this device.',
+            ),
+          ),
+          IconButton(
+            tooltip: 'Dismiss welcome message',
+            onPressed: () => setState(() => _dismissedWelcomeCard = true),
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _installBanner() {
+    final theme = Theme.of(context);
+    final canInstallNow = canPromptInstall;
+    final subtitle = _isIosSafari
+        ? 'Tap Share ⎋ → Add to Home Screen'
+        : canInstallNow
+        ? 'Use Minido in its own app window, without browser tabs.'
+        : 'Add Minido from your browser menu for an app-like experience.';
+
+    Widget installAction() {
+      if (canInstallNow) {
+        return FilledButton.icon(
+          onPressed: () {
+            triggerInstallPrompt();
+            setState(() => _dismissedInstallBanner = true);
+          },
+          icon: const Icon(Icons.install_mobile, size: 18),
+          label: const Text('Install App (No Browser Tabs)'),
+        );
+      }
+      return OutlinedButton(
+        onPressed: () => unawaited(_showAddToHomeScreenGuide()),
+        child: const Text('How?'),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 560;
+        final message = Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _isIosSafari
+                    ? 'Add Minido to your Home Screen'
+                    : 'Install Minido on this device',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(subtitle, style: theme.textTheme.bodySmall),
+            ],
+          ),
+        );
+        final dismissButton = IconButton(
+          tooltip: 'Dismiss install help',
+          onPressed: () => setState(() => _dismissedInstallBanner = true),
+          icon: const Icon(Icons.close),
+        );
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.install_mobile, size: 20),
+                        const SizedBox(width: 10),
+                        message,
+                        dismissButton,
+                      ],
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: installAction(),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    const Icon(Icons.install_mobile, size: 20),
+                    const SizedBox(width: 10),
+                    message,
+                    const SizedBox(width: 12),
+                    installAction(),
+                    dismissButton,
+                  ],
+                ),
+        );
+      },
     );
   }
 

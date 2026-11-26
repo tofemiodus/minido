@@ -15,28 +15,30 @@ The app has no account, cloud sync, or backend service.
 - JSON backup can be copied, downloaded in a browser, or shared/saved through
   the native platform share sheet. Backups can be restored by pasting JSON or
   choosing a `.json` file.
+- Today Focus pins up to three tasks; one-tap snooze and undo make due-date
+  changes easy to recover, with offline local reminders on Android, iOS, and
+  macOS.
 
 ## Download and run
 
 Download the package for your device from the
 [latest release](https://github.com/tofemiodus/minido/releases/latest).
 
-- **Android:** Download `app-arm64-v8a-release.apk` for virtually every modern
-  phone (2018 and newer). Open the downloaded APK and confirm Install. Some
+- **Android:** Download `Minido-Android.apk` for a straightforward install on
+  modern phones. Open the downloaded APK and confirm Install. Some
   browsers or Android settings may ask you to allow installs from that app;
   allow it only for the browser or file manager used to open the APK. Before
   reinstalling a newer release, export a JSON backup; this build uses debug
   signing, so Android may require removing the old app before installing the
-  new one.
-- **Android older ARM devices:** Download `app-armeabi-v7a-release.apk`.
-- **Android emulators / x86 devices:** Download `app-x86_64-release.apk`.
+  new one. `Minido-Android.aab` is for app-store publishing, not direct
+  installation.
 - **Windows 10/11 (x64):** Download `Minido-Windows-x64.zip`, open it in File
   Explorer, select **Extract All**, then open the extracted folder and
   double-click `minido.exe`. Keep the included `data` folder and DLL files
   beside the executable.
 - **Web/PWA:** Open the hosted Minido website over HTTPS and use the browser's
-  **Install** option or Minido's **Install App** guide. The WebAssembly ZIP in
-  the release is for publishing Minido to a web host; it is not a desktop
+  **Install** option or Minido's **Add to Home Screen** guide.
+  `Minido-PWA-Web.zip` is for publishing Minido to a web host; it is not a desktop
   installer and cannot be launched by opening `index.html` directly.
 - **Linux (Debian/Ubuntu):** Download `minido_amd64.deb` and open it with your
   software installer. On Fedora-compatible systems, use `minido-x86_64.rpm`.

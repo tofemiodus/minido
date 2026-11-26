@@ -8,7 +8,9 @@ import 'package:material_ui/material_ui.dart';
 
 import 'models/task_models.dart';
 import 'data/task_store.dart';
+import 'services/notification_service.dart';
 import 'services/pwa_install.dart';
+import 'utils/minido_helpers.dart';
 
 part 'src/views/task_views.dart';
 part 'src/views/statistics_view.dart';
@@ -32,6 +34,7 @@ class _MinidoAppState extends State<MinidoApp> {
   final _quickAddFocus = FocusNode();
   final _quickAddController = TextEditingController();
   late final TaskStore _store = widget.store ?? SharedPreferencesTaskStore();
+  final _notificationService = NotificationService.instance;
   VoidCallback? _removeInstallPromptListener;
 
   List<TodoTask> _tasks = const [];
@@ -59,11 +62,15 @@ class _MinidoAppState extends State<MinidoApp> {
   @override
   void initState() {
     super.initState();
+    unawaited(_notificationService.init());
     if (kIsWeb) {
-      _removeInstallPromptListener = listenForInstallPrompt(() {
-        if (mounted && !_dismissedInstallBanner && !isStandalonePwa) {
-          setState(() {});
-        }
+      _removeInstallPromptListener = listenForInstallPrompt((eventType) {
+        if (!mounted) return;
+        setState(() {
+          if (eventType == 'minido-app-installed') {
+            _dismissedInstallBanner = true;
+          }
+        });
       });
     }
     unawaited(_initialize());
@@ -102,6 +109,9 @@ class _MinidoAppState extends State<MinidoApp> {
             : ThemeMode.light;
         _isLoading = false;
       });
+      for (final task in document.tasks) {
+        unawaited(_syncTaskReminder(task));
+      }
     } on FormatException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -192,6 +202,55 @@ class _MinidoAppState extends State<MinidoApp> {
       );
   }
 
+  Future<void> _promptPwaInstall() async {
+    if (!kIsWeb || isStandalonePwa) return;
+    final result = await minidoPromptInstall();
+    if (!mounted) return;
+    if (result == 'accepted') {
+      setState(() => _dismissedInstallBanner = true);
+    } else if (result == 'unavailable') {
+      await _showAddToHomeScreenGuide();
+    } else {
+      _showMessage('You can install Minido any time from your browser menu.');
+    }
+  }
+
+  Future<void> _enableReminders() async {
+    if (kIsWeb ||
+        !{
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+          TargetPlatform.macOS,
+        }.contains(defaultTargetPlatform)) {
+      _showMessage(
+        'Local reminders are available in the Android, iPhone, iPad, and Mac apps.',
+      );
+      return;
+    }
+    final granted = await _notificationService.requestPermissions();
+    if (!mounted) return;
+    if (!granted) {
+      _showMessage('Reminder permission was not granted.');
+      return;
+    }
+    for (final task in _tasks) {
+      await _syncTaskReminder(task);
+    }
+    _showMessage('Reminders are enabled for tasks with due dates.');
+  }
+
+  Future<void> _syncTaskReminder(TodoTask task) async {
+    if (task.isCancelled || task.isCompleted || task.dueAt == null) {
+      await _notificationService.cancelTaskReminders(task.id);
+      return;
+    }
+    await _notificationService.scheduleTaskReminders(
+      taskId: task.id,
+      title: task.title,
+      dueDate: task.dueAt!,
+    );
+  }
+
   Future<void> _showAddToHomeScreenGuide() async {
     final canInstallNow = kIsWeb && canPromptInstall;
     await showDialog<void>(
@@ -209,7 +268,7 @@ class _MinidoAppState extends State<MinidoApp> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: FilledButton.icon(
-                      onPressed: triggerInstallPrompt,
+                      onPressed: () => unawaited(_promptPwaInstall()),
                       icon: const Icon(Icons.install_mobile),
                       label: const Text('Install Now (1-Tap)'),
                     ),
@@ -377,6 +436,7 @@ class _MinidoAppState extends State<MinidoApp> {
       _quickAddController.clear();
       _dueAt = null;
     });
+    unawaited(_syncTaskReminder(task));
     unawaited(_persist());
   }
 
@@ -387,12 +447,79 @@ class _MinidoAppState extends State<MinidoApp> {
   }
 
   void _replaceTask(TodoTask task) {
+    final normalizedTask =
+        (task.isCompleted || task.isCancelled) && task.isFocus
+        ? task.copyWith(isFocus: false)
+        : task;
     setState(() {
       _tasks = [
         for (final existing in _tasks)
-          if (existing.id == task.id) task else existing,
+          if (existing.id == normalizedTask.id) normalizedTask else existing,
       ];
     });
+    unawaited(_syncTaskReminder(normalizedTask));
+    unawaited(_persist());
+  }
+
+  void _toggleFocus(TodoTask task) {
+    if (task.isCompleted || task.isCancelled) return;
+    final adding = !task.isFocus;
+    final focusedCount = _tasks
+        .where(
+          (item) =>
+              item.isFocus &&
+              !item.isCancelled &&
+              item.bucket != TaskBucket.completed,
+        )
+        .length;
+    if (adding && !MinidoFocus.canAdd(focusedCount)) {
+      _showMessage(MinidoFocus.fullMsg);
+      return;
+    }
+    _replaceTask(
+      task.copyWith(isFocus: adding, updatedAt: DateTime.now().toUtc()),
+    );
+  }
+
+  void _snoozeTask(TodoTask task) {
+    final undo = MinidoUndo(
+      label: task.title,
+      snapshot: MinidoUndo.clone([task.toJson()]),
+    );
+    final snoozed = task.copyWith(
+      dueAt: MinidoSnooze.tomorrow(task.dueAt),
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _replaceTask(snoozed);
+    _messengerKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Snoozed "${undo.label}" until tomorrow'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'UNDO',
+            onPressed: () => _undoSnooze(undo),
+          ),
+        ),
+      );
+  }
+
+  void _undoSnooze(MinidoUndo undo) {
+    if (undo.snapshot.isEmpty) return;
+    final restored = TodoTask.fromJson(undo.snapshot.first);
+    final index = _tasks.indexWhere((task) => task.id == restored.id);
+    setState(() {
+      final updated = List<TodoTask>.of(_tasks);
+      if (index < 0) {
+        updated.add(restored);
+      } else {
+        updated[index] = restored;
+      }
+      _tasks = updated;
+    });
+    unawaited(_syncTaskReminder(restored));
     unawaited(_persist());
   }
 
@@ -410,6 +537,7 @@ class _MinidoAppState extends State<MinidoApp> {
             kanbanColumn: KanbanColumn.done,
             updatedAt: now,
             completedAt: now,
+            isFocus: false,
           );
     _replaceTask(updated);
     _showMessage(
@@ -421,19 +549,19 @@ class _MinidoAppState extends State<MinidoApp> {
 
   void _cancelTask(TodoTask task) {
     final now = DateTime.now().toUtc();
+    final cancelled = task.copyWith(
+      isCancelled: true,
+      cancelledAt: now,
+      updatedAt: now,
+      isFocus: false,
+    );
     setState(() {
       _tasks = [
         for (final existing in _tasks)
-          if (existing.id == task.id)
-            existing.copyWith(
-              isCancelled: true,
-              cancelledAt: now,
-              updatedAt: now,
-            )
-          else
-            existing,
+          if (existing.id == task.id) cancelled else existing,
       ];
     });
+    unawaited(_syncTaskReminder(cancelled));
     unawaited(_persist());
     _showMessage(
       'Task cancelled',
@@ -451,19 +579,18 @@ class _MinidoAppState extends State<MinidoApp> {
       }
     }
     if (existing == null || !existing.isCancelled) return;
+    final restored = existing.copyWith(
+      isCancelled: false,
+      clearCancelledAt: true,
+      updatedAt: DateTime.now().toUtc(),
+    );
     setState(() {
       _tasks = [
         for (final item in _tasks)
-          if (item.id == task.id)
-            item.copyWith(
-              isCancelled: false,
-              clearCancelledAt: true,
-              updatedAt: DateTime.now().toUtc(),
-            )
-          else
-            item,
+          if (item.id == task.id) restored else item,
       ];
     });
+    unawaited(_syncTaskReminder(restored));
     unawaited(_persist());
   }
 
@@ -471,6 +598,7 @@ class _MinidoAppState extends State<MinidoApp> {
     final now = DateTime.now().toUtc();
     final updated = task.copyWith(
       kanbanColumn: column,
+      isFocus: column == KanbanColumn.done ? false : task.isFocus,
       bucket: column == KanbanColumn.done
           ? TaskBucket.completed
           : task.bucket == TaskBucket.completed
@@ -652,6 +780,7 @@ class _MinidoAppState extends State<MinidoApp> {
       return;
     }
     final replaceAll = result.replaceAll;
+    final previousTasks = _tasks;
     int added = 0;
     int updated = 0;
     if (replaceAll) {
@@ -678,6 +807,15 @@ class _MinidoAppState extends State<MinidoApp> {
         if (!importedIds.contains(t.id)) merged.add(t);
       }
       setState(() => _tasks = List.unmodifiable(merged));
+    }
+    final retainedIds = _tasks.map((task) => task.id).toSet();
+    for (final task in previousTasks) {
+      if (!retainedIds.contains(task.id)) {
+        unawaited(_notificationService.cancelTaskReminders(task.id));
+      }
+    }
+    for (final task in _tasks) {
+      unawaited(_syncTaskReminder(task));
     }
     await _persist();
     if (!mounted) return;
@@ -750,6 +888,7 @@ class _MinidoAppState extends State<MinidoApp> {
 
   Widget _buildHome(BuildContext context) {
     final theme = Theme.of(context);
+    final compact = MinidoResponsive.isCompact(context);
     return Scaffold(
       appBar: AppBar(
         title: const Row(
@@ -765,7 +904,8 @@ class _MinidoAppState extends State<MinidoApp> {
           ],
         ),
         actions: [
-          if (_isSaving)
+          if (compact) _compactViewToggle(),
+          if (!compact && _isSaving)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 12),
               child: Center(
@@ -776,24 +916,22 @@ class _MinidoAppState extends State<MinidoApp> {
               ),
             ),
           if (kIsWeb) _offlineReadyPill(),
-          IconButton(
-            tooltip: _themeMode == ThemeMode.dark
-                ? 'Switch to light theme'
-                : 'Switch to dark theme',
-            onPressed: () {
-              setState(
-                () => _themeMode = _themeMode == ThemeMode.dark
-                    ? ThemeMode.light
-                    : ThemeMode.dark,
-              );
-              unawaited(_persist());
-            },
-            icon: Icon(
-              _themeMode == ThemeMode.dark
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
+          if (!compact)
+            IconButton(
+              tooltip: _themeMode == ThemeMode.dark
+                  ? 'Switch to light theme'
+                  : 'Switch to dark theme',
+              constraints: const BoxConstraints(
+                minWidth: MinidoResponsive.tapTarget,
+                minHeight: MinidoResponsive.tapTarget,
+              ),
+              onPressed: _toggleTheme,
+              icon: Icon(
+                _themeMode == ThemeMode.dark
+                    ? Icons.light_mode_outlined
+                    : Icons.dark_mode_outlined,
+              ),
             ),
-          ),
           PopupMenuButton<String>(
             tooltip: 'Backup and restore',
             icon: const Icon(Icons.more_vert),
@@ -813,6 +951,10 @@ class _MinidoAppState extends State<MinidoApp> {
                   setState(() => _viewMode = 'kanban');
                 case 'statistics':
                   setState(() => _viewMode = 'statistics');
+                case 'reminders':
+                  unawaited(_enableReminders());
+                case 'theme':
+                  _toggleTheme();
                 case 'load-samples':
                   _loadSampleTasks();
               }
@@ -824,6 +966,40 @@ class _MinidoAppState extends State<MinidoApp> {
                   child: ListTile(
                     leading: Icon(Icons.install_desktop),
                     title: Text('Install on Other Devices'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              if (kIsWeb && !isStandalonePwa)
+                const PopupMenuItem(
+                  value: 'install-help',
+                  child: ListTile(
+                    leading: Icon(Icons.install_mobile),
+                    title: Text('Add to Home Screen'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'reminders',
+                child: ListTile(
+                  leading: Icon(Icons.notifications_active_outlined),
+                  title: Text('Enable reminders'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              if (compact)
+                PopupMenuItem(
+                  value: 'theme',
+                  child: ListTile(
+                    leading: Icon(
+                      _themeMode == ThemeMode.dark
+                          ? Icons.light_mode_outlined
+                          : Icons.dark_mode_outlined,
+                    ),
+                    title: Text(
+                      _themeMode == ThemeMode.dark
+                          ? 'Light theme'
+                          : 'Dark theme',
+                    ),
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
@@ -843,23 +1019,25 @@ class _MinidoAppState extends State<MinidoApp> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-              PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'list',
-                child: ListTile(
-                  leading: Icon(Icons.view_list),
-                  title: Text('List'),
-                  contentPadding: EdgeInsets.zero,
+              if (!compact) const PopupMenuDivider(),
+              if (!compact)
+                const PopupMenuItem(
+                  value: 'list',
+                  child: ListTile(
+                    leading: Icon(Icons.view_list),
+                    title: Text('List'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'kanban',
-                child: ListTile(
-                  leading: Icon(Icons.view_kanban_outlined),
-                  title: Text('Kanban'),
-                  contentPadding: EdgeInsets.zero,
+              if (!compact)
+                const PopupMenuItem(
+                  value: 'kanban',
+                  child: ListTile(
+                    leading: Icon(Icons.view_kanban_outlined),
+                    title: Text('Kanban'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
               PopupMenuItem(
                 value: 'cancelled',
                 child: ListTile(
@@ -913,13 +1091,54 @@ class _MinidoAppState extends State<MinidoApp> {
     );
   }
 
+  Widget _compactViewToggle() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 4),
+    child: SegmentedButton<String>(
+      showSelectedIcon: false,
+      style: const ButtonStyle(
+        minimumSize: WidgetStatePropertyAll(
+          Size(MinidoResponsive.tapTarget, MinidoResponsive.tapTarget),
+        ),
+        visualDensity: VisualDensity.compact,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: 'list',
+          icon: Icon(Icons.view_list),
+          tooltip: 'List view',
+        ),
+        ButtonSegment(
+          value: 'kanban',
+          icon: Icon(Icons.view_kanban_outlined),
+          tooltip: 'Kanban view',
+        ),
+      ],
+      selected: {_viewMode == 'kanban' ? 'kanban' : 'list'},
+      onSelectionChanged: (selection) =>
+          setState(() => _viewMode = selection.first),
+    ),
+  );
+
+  void _toggleTheme() {
+    setState(
+      () => _themeMode = _themeMode == ThemeMode.dark
+          ? ThemeMode.light
+          : ThemeMode.dark,
+    );
+    unawaited(_persist());
+  }
+
   Widget _offlineReadyPill() {
     if (!_storagePersisted) return const SizedBox.shrink();
+    final compact = MinidoResponsive.isCompact(context);
     return Tooltip(
       message: 'Offline Ready — your tasks are saved on this device',
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        margin: EdgeInsets.symmetric(horizontal: compact ? 2 : 6),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 5 : 9,
+          vertical: compact ? 4 : 6,
+        ),
         decoration: BoxDecoration(
           color: Colors.green.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(20),
@@ -939,7 +1158,7 @@ class _MinidoAppState extends State<MinidoApp> {
             const Text(
               'Offline Ready',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: Colors.green,
               ),
@@ -988,19 +1207,22 @@ class _MinidoAppState extends State<MinidoApp> {
         : 'Add Minido from your browser menu for an app-like experience.';
 
     Widget installAction() {
+      if (_isIosSafari) {
+        return OutlinedButton(
+          onPressed: () => unawaited(_showAddToHomeScreenGuide()),
+          child: const Text('How?'),
+        );
+      }
       if (canInstallNow) {
         return FilledButton.icon(
-          onPressed: () {
-            triggerInstallPrompt();
-            setState(() => _dismissedInstallBanner = true);
-          },
+          onPressed: () => unawaited(_promptPwaInstall()),
           icon: const Icon(Icons.install_mobile, size: 18),
-          label: const Text('Install App (No Browser Tabs)'),
+          label: const Text('Add to Home Screen'),
         );
       }
       return OutlinedButton(
-        onPressed: () => unawaited(_showAddToHomeScreenGuide()),
-        child: const Text('How?'),
+        onPressed: () => unawaited(_promptPwaInstall()),
+        child: const Text('Add to Home Screen'),
       );
     }
 
@@ -1075,9 +1297,10 @@ class _MinidoAppState extends State<MinidoApp> {
   }
 
   Widget _buildWorkspace(ThemeData theme) {
+    final compact = MinidoResponsive.isCompact(context);
     if (_viewMode == 'statistics') {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        padding: EdgeInsets.all(MinidoResponsive.pad(context)),
         child: _StatisticsView(
           tasks: _tasks,
           periodDays: _statisticsPeriodDays,
@@ -1086,81 +1309,20 @@ class _MinidoAppState extends State<MinidoApp> {
         ),
       );
     }
-    final draft = _quickDraft;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      padding: EdgeInsets.fromLTRB(
+        MinidoResponsive.pad(context),
+        8,
+        MinidoResponsive.pad(context),
+        compact ? 8 : 20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerLow,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.add_task),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _quickAddController,
-                          focusNode: _quickAddFocus,
-                          textInputAction: TextInputAction.done,
-                          decoration: const InputDecoration(
-                            hintText: 'Add a task... try "Call Sam !high #work today"',
-                            border: InputBorder.none,
-                          ),
-                          onChanged: (_) => setState(() {}),
-                          onSubmitted: (_) => _addQuickTask(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.icon(
-                        onPressed: draft.title.isEmpty ? null : _addQuickTask,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add task'),
-                      ),
-                    ],
-                  ),
-                  _DueDateControls(
-                    dueAt: _dueAt,
-                    onChanged: (value) => setState(() => _dueAt = value),
-                  ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          'Preview',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        _PriorityPill(priority: draft.priority),
-                        _BucketPill(bucket: draft.bucket),
-                        ...draft.tags.map((tag) => _TagPill(tag: tag)),
-                        if (_quickAddController.text.trim().isEmpty)
-                          Text(
-                            'Use !high, !med, !low, #tags, today or tomorrow',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildFilters(theme),
-          const SizedBox(height: 12),
+          if (!compact) _buildQuickAddCard(theme, compact: false),
+          if (!compact) const SizedBox(height: 12),
+          _buildFilters(theme, compact: compact),
+          const SizedBox(height: 8),
           Expanded(
             child: _viewMode == 'cancelled'
                 ? _buildCancelledTasks(_visibleTasks)
@@ -1169,14 +1331,113 @@ class _MinidoAppState extends State<MinidoApp> {
                     tasks: _visibleTasks,
                     onOpen: _editTask,
                     onMove: _moveTask,
+                    onToggleFocus: _toggleFocus,
+                    onSnooze: _snoozeTask,
                   )
                 : _TaskList(
                     tasks: _visibleTasks,
                     onOpen: _editTask,
                     onToggleCompletion: _toggleCompletion,
+                    onToggleFocus: _toggleFocus,
+                    onSnooze: _snoozeTask,
                   ),
           ),
+          if (compact && _viewMode != 'cancelled') ...[
+            const SizedBox(height: 8),
+            _buildQuickAddCard(theme, compact: true),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildQuickAddCard(ThemeData theme, {required bool compact}) {
+    final draft = _quickDraft;
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 16,
+          vertical: compact ? 4 : 8,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                if (!compact) ...[
+                  const Icon(Icons.add_task),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: TextField(
+                    controller: _quickAddController,
+                    focusNode: _quickAddFocus,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      hintText: compact
+                          ? 'Add a task...'
+                          : 'Add a task... try "Call Sam !high #work today"',
+                      border: InputBorder.none,
+                      isDense: compact,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                    onSubmitted: (_) => _addQuickTask(),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                if (compact)
+                  IconButton.filled(
+                    tooltip: 'Add task',
+                    constraints: const BoxConstraints(
+                      minWidth: MinidoResponsive.tapTarget,
+                      minHeight: MinidoResponsive.tapTarget,
+                    ),
+                    onPressed: draft.title.isEmpty ? null : _addQuickTask,
+                    icon: const Icon(Icons.add),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: draft.title.isEmpty ? null : _addQuickTask,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add task'),
+                  ),
+              ],
+            ),
+            _DueDateControls(
+              dueAt: _dueAt,
+              onChanged: (value) => setState(() => _dueAt = value),
+            ),
+            if (!compact)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'Preview',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    _PriorityPill(priority: draft.priority),
+                    _BucketPill(bucket: draft.bucket),
+                    ...draft.tags.map((tag) => _TagPill(tag: tag)),
+                    if (_quickAddController.text.trim().isEmpty)
+                      Text(
+                        'Use !high, !med, !low, #tags, today or tomorrow',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1194,7 +1455,7 @@ class _MinidoAppState extends State<MinidoApp> {
     );
   }
 
-  Widget _buildFilters(ThemeData theme) {
+  Widget _buildFilters(ThemeData theme, {required bool compact}) {
     final tags = _tasks.expand((task) => task.tags).toSet().toList()..sort();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1204,42 +1465,43 @@ class _MinidoAppState extends State<MinidoApp> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            SegmentedButton<String>(
-              style: _viewMode == 'cancelled'
-                  ? ButtonStyle(
-                      backgroundColor: WidgetStateProperty.resolveWith(
-                        (states) => states.contains(WidgetState.selected)
-                            ? const Color(0xFFF4D5DC)
-                            : null,
-                      ),
-                      foregroundColor: WidgetStateProperty.resolveWith(
-                        (states) => states.contains(WidgetState.selected)
-                            ? const Color(0xFF762D42)
-                            : null,
-                      ),
-                    )
-                  : null,
-              segments: const [
-                ButtonSegment(
-                  value: 'list',
-                  icon: Icon(Icons.view_list),
-                  label: Text('List'),
-                ),
-                ButtonSegment(
-                  value: 'kanban',
-                  icon: Icon(Icons.view_kanban_outlined),
-                  label: Text('Kanban'),
-                ),
-                ButtonSegment(
-                  value: 'cancelled',
-                  icon: Icon(Icons.cancel_outlined),
-                  label: Text('Cancelled'),
-                ),
-              ],
-              selected: {_viewMode},
-              onSelectionChanged: (selection) =>
-                  setState(() => _viewMode = selection.first),
-            ),
+            if (!compact)
+              SegmentedButton<String>(
+                style: _viewMode == 'cancelled'
+                    ? ButtonStyle(
+                        backgroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.selected)
+                              ? const Color(0xFFF4D5DC)
+                              : null,
+                        ),
+                        foregroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.selected)
+                              ? const Color(0xFF762D42)
+                              : null,
+                        ),
+                      )
+                    : null,
+                segments: const [
+                  ButtonSegment(
+                    value: 'list',
+                    icon: Icon(Icons.view_list),
+                    label: Text('List'),
+                  ),
+                  ButtonSegment(
+                    value: 'kanban',
+                    icon: Icon(Icons.view_kanban_outlined),
+                    label: Text('Kanban'),
+                  ),
+                  ButtonSegment(
+                    value: 'cancelled',
+                    icon: Icon(Icons.cancel_outlined),
+                    label: Text('Cancelled'),
+                  ),
+                ],
+                selected: {_viewMode},
+                onSelectionChanged: (selection) =>
+                    setState(() => _viewMode = selection.first),
+              ),
             SizedBox(
               width: 240,
               child: SearchBar(

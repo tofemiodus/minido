@@ -43,10 +43,12 @@ class TodoTask {
     this.subtasks = const [],
     DateTime? updatedAt,
     this.isCancelled = false,
+    bool isFocus = false,
     this.dueAt,
     this.cancelledAt,
     this.completedAt,
-  }) : updatedAt = updatedAt ?? DateTime.now().toUtc();
+  }) : updatedAt = updatedAt ?? DateTime.now().toUtc(),
+       isFocus = isFocus && !isCancelled && bucket != TaskBucket.completed;
 
   final String id;
   final String title;
@@ -58,6 +60,7 @@ class TodoTask {
   final List<Subtask> subtasks;
   final DateTime updatedAt;
   final bool isCancelled;
+  final bool isFocus;
   final DateTime? dueAt;
   final DateTime? cancelledAt;
   final DateTime? completedAt;
@@ -77,6 +80,7 @@ class TodoTask {
     List<Subtask>? subtasks,
     DateTime? updatedAt,
     bool? isCancelled,
+    bool? isFocus,
     DateTime? dueAt,
     bool clearDueAt = false,
     DateTime? cancelledAt,
@@ -94,6 +98,7 @@ class TodoTask {
     subtasks: subtasks ?? this.subtasks,
     updatedAt: updatedAt ?? this.updatedAt,
     isCancelled: isCancelled ?? this.isCancelled,
+    isFocus: isFocus ?? this.isFocus,
     dueAt: clearDueAt ? null : dueAt ?? this.dueAt,
     cancelledAt: clearCancelledAt ? null : cancelledAt ?? this.cancelledAt,
     completedAt: clearCompletedAt ? null : completedAt ?? this.completedAt,
@@ -110,6 +115,7 @@ class TodoTask {
     'subtasks': subtasks.map((subtask) => subtask.toJson()).toList(),
     'updatedAt': updatedAt.toIso8601String(),
     'isCancelled': isCancelled,
+    'isFocus': isFocus,
     'dueAt': dueAt?.toIso8601String(),
     'cancelledAt': cancelledAt?.toIso8601String(),
     'completedAt': completedAt?.toIso8601String(),
@@ -147,6 +153,7 @@ class TodoTask {
       subtasks: subtasksValue.map(Subtask.fromJson).toList(),
       updatedAt: _optionalDateTime(map, 'updatedAt') ?? DateTime.now().toUtc(),
       isCancelled: _optionalBool(map, 'isCancelled', false, 'task'),
+      isFocus: _optionalBool(map, 'isFocus', false, 'task'),
       dueAt: _optionalDateTime(map, 'dueAt'),
       cancelledAt: _optionalDateTime(map, 'cancelledAt'),
       completedAt: _optionalDateTime(map, 'completedAt'),

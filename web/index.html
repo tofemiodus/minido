@@ -46,19 +46,26 @@
   <title>Minido</title>
   <link rel="manifest" href="manifest.json">
   <script>
-    let deferredInstallPrompt = null;
+    window.__minidoDeferredPrompt = null;
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
-      deferredInstallPrompt = event;
-      window.dispatchEvent(new Event('minido-install-prompt-available'));
+      window.__minidoDeferredPrompt = event;
+      window.dispatchEvent(new Event('minido-install-available'));
     });
-    window.canPromptInstall = () => deferredInstallPrompt !== null;
-    window.triggerInstallPrompt = async () => {
-      if (!deferredInstallPrompt) return;
-      deferredInstallPrompt.prompt();
-      await deferredInstallPrompt.userChoice;
-      deferredInstallPrompt = null;
+    window.addEventListener('appinstalled', () => {
+      window.__minidoDeferredPrompt = null;
+      window.dispatchEvent(new Event('minido-app-installed'));
+    });
+    window.minidoPromptInstall = async () => {
+      const prompt = window.__minidoDeferredPrompt;
+      if (!prompt) return 'unavailable';
+      prompt.prompt();
+      const choice = await prompt.userChoice;
+      window.__minidoDeferredPrompt = null;
+      return choice.outcome === 'accepted' ? 'accepted' : 'dismissed';
     };
+    window.canPromptInstall = () => window.__minidoDeferredPrompt !== null;
+    window.triggerInstallPrompt = () => window.minidoPromptInstall();
     window.isStandalonePwa = () =>
       window.matchMedia('(display-mode: standalone)').matches ||
       window.navigator.standalone === true;
@@ -69,7 +76,8 @@
       const isIosDevice =
         /iPad|iPhone|iPod/.test(ua) ||
         (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      return isIosDevice && /WebKit/.test(ua);
+      const isAlternateBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+      return isIosDevice && /Safari/.test(ua) && !isAlternateBrowser;
     };
 
     window.persistStorage = async () => {

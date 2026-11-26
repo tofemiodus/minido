@@ -77,6 +77,11 @@ void main() {
   testWidgets('first launch seeds sample tasks and can clear them', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final store = MemoryTaskStore();
     await tester.pumpWidget(MinidoApp(store: store));
     await tester.pumpAndSettle();

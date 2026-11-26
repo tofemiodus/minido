@@ -400,6 +400,49 @@ class _MinidoAppState extends State<MinidoApp> {
   Future<void> _showQuickAddConfirmation() async {
     final draft = _quickDraft;
     final dueAt = _dueAt;
+    var reminderOffsetMinutes = _quickReminderOffsetMinutes;
+    final result = await showDialog<bool>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create task'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: [
+                Text('Title: ${draft.title}'),
+                const SizedBox(height: 6),
+                Text('Priority: ${_priorityName(draft.priority)}'),
+                const SizedBox(height: 6),
+                Text(
+                  'Scheduled Date & Time: ${dueAt == null ? 'No due date' : _formatDateTime(dueAt)}',
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Tags: ${draft.tags.isEmpty ? 'None' : draft.tags.join(', ')}',
+                ),
+                const SizedBox(height: 12),
+                _ReminderOffsetSelector(
+                  value: reminderOffsetMinutes,
+                  onChanged: (value) =>
+                      setDialogState(() => reminderOffsetMinutes = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirm & Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != true || !mounted) return;
     final task = TodoTask(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       title: draft.title,
@@ -407,46 +450,13 @@ class _MinidoAppState extends State<MinidoApp> {
       bucket: draft.bucket,
       tags: List.unmodifiable(draft.tags),
       dueAt: dueAt,
-      reminderOffsetMinutes: _quickReminderOffsetMinutes,
+      reminderOffsetMinutes: reminderOffsetMinutes,
     );
-    final result = await showDialog<bool>(
-      context: _navigatorKey.currentContext!,
-      builder: (context) => AlertDialog(
-        title: const Text('Create task'),
-        content: SingleChildScrollView(
-          child: ListBody(
-            children: [
-              Text('Title: ${draft.title}'),
-              const SizedBox(height: 6),
-              Text('Priority: ${_priorityName(draft.priority)}'),
-              const SizedBox(height: 6),
-              Text(
-                'Scheduled Date & Time: ${dueAt == null ? 'No due date' : _formatDateTime(dueAt)}',
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Tags: ${draft.tags.isEmpty ? 'None' : draft.tags.join(', ')}',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirm & Create'),
-          ),
-        ],
-      ),
-    );
-    if (result != true || !mounted) return;
     setState(() {
       _tasks = [..._tasks, task];
       _quickAddController.clear();
       _dueAt = null;
+      _quickReminderOffsetMinutes = reminderOffsetMinutes;
     });
     unawaited(_syncTaskReminder(task));
     unawaited(_persist());
@@ -1420,12 +1430,6 @@ class _MinidoAppState extends State<MinidoApp> {
             _DueDateControls(
               dueAt: _dueAt,
               onChanged: (value) => setState(() => _dueAt = value),
-            ),
-            const SizedBox(height: 8),
-            _ReminderOffsetSelector(
-              value: _quickReminderOffsetMinutes,
-              onChanged: (value) =>
-                  setState(() => _quickReminderOffsetMinutes = value),
             ),
             if (!compact)
               Align(

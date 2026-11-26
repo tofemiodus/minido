@@ -28,7 +28,7 @@ class MinidoApp extends StatefulWidget {
   State<MinidoApp> createState() => _MinidoAppState();
 }
 
-class _MinidoAppState extends State<MinidoApp> {
+class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _quickAddFocus = FocusNode();
@@ -55,6 +55,7 @@ class _MinidoAppState extends State<MinidoApp> {
   String _viewMode = 'list'; // 'list' | 'kanban' | 'cancelled' | 'statistics'
   int _statisticsPeriodDays = 7;
   DateTime? _dueAt;
+  int _quickReminderOffsetMinutes = 15;
   DateTime? _lastExported;
 
   QuickAddDraft get _quickDraft => parseQuickAdd(_quickAddController.text);
@@ -62,7 +63,9 @@ class _MinidoAppState extends State<MinidoApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_notificationService.init());
+    unawaited(_requestMobileNotificationPermissions());
     if (kIsWeb) {
       _removeInstallPromptListener = listenForInstallPrompt((eventType) {
         if (!mounted) return;
@@ -78,10 +81,29 @@ class _MinidoAppState extends State<MinidoApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _quickAddFocus.dispose();
     _quickAddController.dispose();
     _removeInstallPromptListener?.call();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_requestMobileNotificationPermissions());
+    }
+  }
+
+  Future<void> _requestMobileNotificationPermissions() async {
+    if (kIsWeb ||
+        !{
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+        }.contains(defaultTargetPlatform)) {
+      return;
+    }
+    await _notificationService.requestPermissions();
   }
 
   Future<void> _initialize() async {
@@ -241,13 +263,23 @@ class _MinidoAppState extends State<MinidoApp> {
 
   Future<void> _syncTaskReminder(TodoTask task) async {
     if (task.isCancelled || task.isCompleted || task.dueAt == null) {
-      await _notificationService.cancelTaskReminders(task.id);
+      await _notificationService.scheduleTaskReminders(
+        taskId: task.id,
+        title: task.title,
+        dueDate: task.dueAt,
+        isCompleted: task.isCompleted,
+        isCancelled: task.isCancelled,
+        reminderOffsetMinutes: task.reminderOffsetMinutes,
+      );
       return;
     }
     await _notificationService.scheduleTaskReminders(
       taskId: task.id,
       title: task.title,
       dueDate: task.dueAt!,
+      isCompleted: task.isCompleted,
+      isCancelled: task.isCancelled,
+      reminderOffsetMinutes: task.reminderOffsetMinutes,
     );
   }
 
@@ -389,6 +421,49 @@ class _MinidoAppState extends State<MinidoApp> {
   Future<void> _showQuickAddConfirmation() async {
     final draft = _quickDraft;
     final dueAt = _dueAt;
+    var reminderOffsetMinutes = _quickReminderOffsetMinutes;
+    final result = await showDialog<bool>(
+      context: _navigatorKey.currentContext!,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create task'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: [
+                Text('Title: ${draft.title}'),
+                const SizedBox(height: 6),
+                Text('Priority: ${_priorityName(draft.priority)}'),
+                const SizedBox(height: 6),
+                Text(
+                  'Scheduled Date & Time: ${dueAt == null ? 'No due date' : _formatDateTime(dueAt)}',
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Tags: ${draft.tags.isEmpty ? 'None' : draft.tags.join(', ')}',
+                ),
+                const SizedBox(height: 12),
+                _ReminderOffsetSelector(
+                  value: reminderOffsetMinutes,
+                  onChanged: (value) =>
+                      setDialogState(() => reminderOffsetMinutes = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirm & Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != true || !mounted) return;
     final task = TodoTask(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       title: draft.title,
@@ -396,45 +471,13 @@ class _MinidoAppState extends State<MinidoApp> {
       bucket: draft.bucket,
       tags: List.unmodifiable(draft.tags),
       dueAt: dueAt,
+      reminderOffsetMinutes: reminderOffsetMinutes,
     );
-    final result = await showDialog<bool>(
-      context: _navigatorKey.currentContext!,
-      builder: (context) => AlertDialog(
-        title: const Text('Create task'),
-        content: SingleChildScrollView(
-          child: ListBody(
-            children: [
-              Text('Title: ${draft.title}'),
-              const SizedBox(height: 6),
-              Text('Priority: ${_priorityName(draft.priority)}'),
-              const SizedBox(height: 6),
-              Text(
-                'Scheduled Date & Time: ${dueAt == null ? 'No due date' : _formatDateTime(dueAt)}',
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Tags: ${draft.tags.isEmpty ? 'None' : draft.tags.join(', ')}',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirm & Create'),
-          ),
-        ],
-      ),
-    );
-    if (result != true || !mounted) return;
     setState(() {
       _tasks = [..._tasks, task];
       _quickAddController.clear();
       _dueAt = null;
+      _quickReminderOffsetMinutes = reminderOffsetMinutes;
     });
     unawaited(_syncTaskReminder(task));
     unawaited(_persist());
@@ -953,6 +996,12 @@ class _MinidoAppState extends State<MinidoApp> {
                   setState(() => _viewMode = 'statistics');
                 case 'reminders':
                   unawaited(_enableReminders());
+                case 'test-reminder':
+                  unawaited(
+                    _notificationService.sendTestNotificationIn5Seconds(
+                      onMessage: (message) => _showMessage(message),
+                    ),
+                  );
                 case 'theme':
                   _toggleTheme();
                 case 'load-samples':
@@ -983,6 +1032,14 @@ class _MinidoAppState extends State<MinidoApp> {
                 child: ListTile(
                   leading: Icon(Icons.notifications_active_outlined),
                   title: Text('Enable reminders'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'test-reminder',
+                child: ListTile(
+                  leading: Icon(Icons.notifications_active),
+                  title: Text('Test Reminder (5s)'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),

@@ -91,7 +91,6 @@ jobs:
 
       - name: Build PWA Web
         run: flutter build web --release --base-href /
-        run: flutter build web --release --base-href ./
 
       - name: Package PWA Web
         shell: bash
@@ -135,21 +134,15 @@ jobs:
       - name: Build Android APK
         run: flutter build apk --release
 
-      - name: Build Android App Bundle
-        run: flutter build appbundle --release
-
-      - name: Collect Android artifacts
+      - name: Collect Android APK
         run: |
           cp build/app/outputs/flutter-apk/app-release.apk Minido-Android.apk
-          cp build/app/outputs/bundle/release/app-release.aab Minido-Android.aab
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: android
-          path: |
-            Minido-Android.apk
-            Minido-Android.aab
+          path: Minido-Android.apk
           if-no-files-found: error
 
   build-windows:

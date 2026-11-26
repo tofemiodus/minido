@@ -91,7 +91,6 @@ jobs:
 
       - name: Build PWA Web
         run: flutter build web --release --base-href /
-        run: flutter build web --release --base-href ./
 
       - name: Package PWA Web
         shell: bash

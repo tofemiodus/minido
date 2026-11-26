@@ -33,11 +33,15 @@ class _TaskList extends StatelessWidget {
     required this.tasks,
     required this.onOpen,
     required this.onToggleCompletion,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final List<TodoTask> tasks;
   final ValueChanged<TodoTask> onOpen;
   final ValueChanged<TodoTask> onToggleCompletion;
+  final ValueChanged<TodoTask> onToggleFocus;
+  final ValueChanged<TodoTask> onSnooze;
 
   @override
   Widget build(BuildContext context) {
@@ -47,21 +51,46 @@ class _TaskList extends StatelessWidget {
       (TaskBucket.completed, 'Completed', Icons.check_circle_outline),
     ];
     final wide = MediaQuery.of(context).size.width >= 900;
+    final focusTasks = tasks
+        .where(
+          (task) =>
+              task.isFocus &&
+              task.bucket != TaskBucket.completed &&
+              !task.isCancelled,
+        )
+        .toList();
+    final regularTasks = tasks
+        .where(
+          (task) =>
+              !task.isFocus ||
+              task.bucket == TaskBucket.completed ||
+              task.isCancelled,
+        )
+        .toList();
     final sections = <Widget>[
       for (final (bucket, title, icon) in groups)
         _BucketSection(
           bucket: bucket,
           title: title,
           icon: icon,
-          tasks: tasks.where((task) => task.bucket == bucket).toList(),
+          tasks: regularTasks.where((task) => task.bucket == bucket).toList(),
           onOpen: onOpen,
           onToggle: onToggleCompletion,
+          onToggleFocus: onToggleFocus,
+          onSnooze: onSnooze,
         ),
     ];
     if (wide) {
       return ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          _TodayFocusSection(
+            tasks: focusTasks,
+            onOpen: onOpen,
+            onToggleCompletion: onToggleCompletion,
+            onToggleFocus: onToggleFocus,
+            onSnooze: onSnooze,
+          ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -71,11 +100,82 @@ class _TaskList extends StatelessWidget {
         ],
       );
     }
+    final children = <Widget>[
+      _TodayFocusSection(
+        tasks: focusTasks,
+        onOpen: onOpen,
+        onToggleCompletion: onToggleCompletion,
+        onToggleFocus: onToggleFocus,
+        onSnooze: onSnooze,
+      ),
+      ...sections,
+    ];
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
-      children: sections,
+      children: children,
     );
   }
+}
+
+class _TodayFocusSection extends StatelessWidget {
+  const _TodayFocusSection({
+    required this.tasks,
+    required this.onOpen,
+    required this.onToggleCompletion,
+    required this.onToggleFocus,
+    required this.onSnooze,
+  });
+
+  final List<TodoTask> tasks;
+  final ValueChanged<TodoTask> onOpen;
+  final ValueChanged<TodoTask> onToggleCompletion;
+  final ValueChanged<TodoTask> onToggleFocus;
+  final ValueChanged<TodoTask> onSnooze;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+        child: Row(
+          children: [
+            Icon(
+              Icons.star,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Text('Today Focus', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(width: 8),
+            Text(
+              '${tasks.length}/${MinidoFocus.max}',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+          ],
+        ),
+      ),
+      if (tasks.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+          child: Text(
+            'Star up to 3 active tasks to pin them here',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ...tasks.map(
+        (task) => _TaskCard(
+          task: task,
+          onTap: () => onOpen(task),
+          onToggle: () => onToggleCompletion(task),
+          onToggleFocus: () => onToggleFocus(task),
+          onSnooze: () => onSnooze(task),
+        ),
+      ),
+    ],
+  );
 }
 
 class _BucketSection extends StatelessWidget {
@@ -86,6 +186,8 @@ class _BucketSection extends StatelessWidget {
     required this.tasks,
     required this.onOpen,
     required this.onToggle,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final TaskBucket bucket;
@@ -94,6 +196,8 @@ class _BucketSection extends StatelessWidget {
   final List<TodoTask> tasks;
   final ValueChanged<TodoTask> onOpen;
   final ValueChanged<TodoTask> onToggle;
+  final ValueChanged<TodoTask> onToggleFocus;
+  final ValueChanged<TodoTask> onSnooze;
 
   @override
   Widget build(BuildContext context) {
@@ -124,6 +228,8 @@ class _BucketSection extends StatelessWidget {
             task: task,
             onTap: () => onOpen(task),
             onToggle: () => onToggle(task),
+            onToggleFocus: () => onToggleFocus(task),
+            onSnooze: () => onSnooze(task),
           ),
         ),
         if (tasks.isEmpty)
@@ -146,16 +252,23 @@ class _TaskCard extends StatelessWidget {
     required this.task,
     required this.onTap,
     required this.onToggle,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final TodoTask task;
   final VoidCallback onTap;
   final VoidCallback onToggle;
+  final VoidCallback onToggleFocus;
+  final VoidCallback onSnooze;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final completed = task.bucket == TaskBucket.completed;
+    if (MinidoResponsive.isCompact(context)) {
+      return _buildCompactTaskCard(theme, completed);
+    }
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
@@ -219,9 +332,41 @@ class _TaskCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Padding(
-                padding: const EdgeInsets.only(top: 6, right: 4),
-                child: _PriorityPill(priority: task.priority),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, right: 4),
+                    child: _PriorityPill(priority: task.priority),
+                  ),
+                  if (!completed && !task.isCancelled)
+                    IconButton(
+                      tooltip: task.isFocus
+                          ? 'Remove from Today Focus'
+                          : 'Add to Today Focus',
+                      constraints: const BoxConstraints(
+                        minWidth: MinidoResponsive.tapTarget,
+                        minHeight: MinidoResponsive.tapTarget,
+                      ),
+                      onPressed: onToggleFocus,
+                      icon: Icon(
+                        task.isFocus ? Icons.star : Icons.star_border,
+                        color: task.isFocus ? Colors.amber : null,
+                      ),
+                    ),
+                  if (!completed && !task.isCancelled)
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(
+                          MinidoResponsive.tapTarget,
+                          MinidoResponsive.tapTarget,
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: onSnooze,
+                      child: const Text('+1d'),
+                    ),
+                ],
               ),
             ],
           ),
@@ -229,6 +374,95 @@ class _TaskCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildCompactTaskCard(ThemeData theme, bool completed) => Card(
+    elevation: 0,
+    margin: const EdgeInsets.only(bottom: 6),
+    color: theme.colorScheme.surface,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: MinidoResponsive.tapTarget,
+                height: MinidoResponsive.tapTarget,
+                child: Checkbox(
+                  value: completed,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged: (_) => onToggle(),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: InkWell(
+                  onTap: onTap,
+                  child: Text(
+                    task.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      decoration: completed ? TextDecoration.lineThrough : null,
+                      color: completed
+                          ? theme.colorScheme.onSurfaceVariant
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _CompactPriorityBadge(priority: task.priority),
+            ],
+          ),
+          Row(
+            children: [
+              const SizedBox(width: MinidoResponsive.tapTarget + 4),
+              Expanded(
+                child: Text(
+                  task.dueAt == null
+                      ? 'No due date'
+                      : _formatShortDateTime(task.dueAt!),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (!completed && !task.isCancelled)
+                IconButton(
+                  tooltip: task.isFocus
+                      ? 'Remove from Today Focus'
+                      : 'Add to Today Focus',
+                  constraints: const BoxConstraints(
+                    minWidth: MinidoResponsive.tapTarget,
+                    minHeight: MinidoResponsive.tapTarget,
+                  ),
+                  onPressed: onToggleFocus,
+                  icon: Icon(
+                    task.isFocus ? Icons.star : Icons.star_border,
+                    color: task.isFocus ? Colors.amber : null,
+                  ),
+                ),
+              if (!completed && !task.isCancelled)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(
+                      MinidoResponsive.tapTarget,
+                      MinidoResponsive.tapTarget,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: onSnooze,
+                  child: const Text('+1d'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _KanbanBoard extends StatelessWidget {
@@ -236,15 +470,44 @@ class _KanbanBoard extends StatelessWidget {
     required this.tasks,
     required this.onOpen,
     required this.onMove,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final List<TodoTask> tasks;
   final ValueChanged<TodoTask> onOpen;
   final void Function(TodoTask, KanbanColumn) onMove;
+  final ValueChanged<TodoTask> onToggleFocus;
+  final ValueChanged<TodoTask> onSnooze;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
+      final compact = MinidoResponsive.isCompact(context);
+      if (compact) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final column in KanbanColumn.values)
+                SizedBox(
+                  width: constraints.maxWidth * 0.82,
+                  child: _KanbanLane(
+                    column: column,
+                    tasks: tasks
+                        .where((task) => task.kanbanColumn == column)
+                        .toList(),
+                    onOpen: onOpen,
+                    onMove: onMove,
+                    onToggleFocus: onToggleFocus,
+                    onSnooze: onSnooze,
+                  ),
+                ),
+            ],
+          ),
+        );
+      }
       const minimumBoardWidth = 900.0;
       final boardWidth = constraints.maxWidth < minimumBoardWidth
           ? minimumBoardWidth
@@ -265,6 +528,8 @@ class _KanbanBoard extends StatelessWidget {
                         .toList(),
                     onOpen: onOpen,
                     onMove: onMove,
+                    onToggleFocus: onToggleFocus,
+                    onSnooze: onSnooze,
                   ),
                 ),
             ],
@@ -281,12 +546,16 @@ class _KanbanLane extends StatelessWidget {
     required this.tasks,
     required this.onOpen,
     required this.onMove,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final KanbanColumn column;
   final List<TodoTask> tasks;
   final ValueChanged<TodoTask> onOpen;
   final void Function(TodoTask, KanbanColumn) onMove;
+  final ValueChanged<TodoTask> onToggleFocus;
+  final ValueChanged<TodoTask> onSnooze;
 
   @override
   Widget build(BuildContext context) {
@@ -358,6 +627,8 @@ class _KanbanLane extends StatelessWidget {
                               column: column,
                               onOpen: () => onOpen(task),
                               onMove: (next) => onMove(task, next),
+                              onToggleFocus: () => onToggleFocus(task),
+                              onSnooze: () => onSnooze(task),
                             ),
                           )
                           .toList(),
@@ -376,12 +647,16 @@ class _KanbanCard extends StatelessWidget {
     required this.column,
     required this.onOpen,
     required this.onMove,
+    required this.onToggleFocus,
+    required this.onSnooze,
   });
 
   final TodoTask task;
   final KanbanColumn column;
   final VoidCallback onOpen;
   final ValueChanged<KanbanColumn> onMove;
+  final VoidCallback onToggleFocus;
+  final VoidCallback onSnooze;
 
   @override
   Widget build(BuildContext context) => LongPressDraggable<TodoTask>(
@@ -391,16 +666,28 @@ class _KanbanCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: SizedBox(
         width: 250,
-        child: _KanbanCardContents(task: task, onOpen: onOpen),
+        child: _KanbanCardContents(
+          task: task,
+          onOpen: onOpen,
+          onToggleFocus: onToggleFocus,
+          onSnooze: onSnooze,
+        ),
       ),
     ),
     childWhenDragging: Opacity(
       opacity: 0.35,
-      child: _KanbanCardContents(task: task, onOpen: onOpen),
+      child: _KanbanCardContents(
+        task: task,
+        onOpen: onOpen,
+        onToggleFocus: onToggleFocus,
+        onSnooze: onSnooze,
+      ),
     ),
     child: _KanbanCardContents(
       task: task,
       onOpen: onOpen,
+      onToggleFocus: onToggleFocus,
+      onSnooze: onSnooze,
       onMove: onMove,
       column: column,
     ),
@@ -411,90 +698,168 @@ class _KanbanCardContents extends StatelessWidget {
   const _KanbanCardContents({
     required this.task,
     required this.onOpen,
+    required this.onToggleFocus,
+    required this.onSnooze,
     this.onMove,
     this.column,
   });
 
   final TodoTask task;
   final VoidCallback onOpen;
+  final VoidCallback onToggleFocus;
+  final VoidCallback onSnooze;
   final ValueChanged<KanbanColumn>? onMove;
   final KanbanColumn? column;
 
   @override
-  Widget build(BuildContext context) => Card(
-    elevation: 0,
-    margin: const EdgeInsets.only(bottom: 8),
-    child: InkWell(
-      onTap: onOpen,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    task.title,
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-                _PriorityPill(priority: task.priority),
-              ],
-            ),
-            if (task.bucket != TaskBucket.completed &&
-                !task.isCancelled &&
-                task.dueAt != null) ...[
-              const SizedBox(height: 7),
-              _DueDatePill(dueAt: task.dueAt!),
-            ],
-            if (task.notes.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                task.notes,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            if (task.tags.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 5,
-                runSpacing: 4,
-                children: task.tags.map((tag) => _TagPill(tag: tag)).toList(),
-              ),
-            ],
-            if (onMove != null && column != null) ...[
-              const SizedBox(height: 6),
+  Widget build(BuildContext context) {
+    final compact = MinidoResponsive.isCompact(context);
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  if (column!.index > 0)
-                    IconButton(
-                      tooltip: 'Move left',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () =>
-                          onMove!(KanbanColumn.values[column!.index - 1]),
-                      icon: const Icon(Icons.chevron_left),
+                  Expanded(
+                    child: Text(
+                      task.title,
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
-                  if (column!.index < KanbanColumn.values.length - 1)
-                    IconButton(
-                      tooltip: 'Move right',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () =>
-                          onMove!(KanbanColumn.values[column!.index + 1]),
-                      icon: const Icon(Icons.chevron_right),
-                    ),
+                  ),
+                  compact
+                      ? _CompactPriorityBadge(priority: task.priority)
+                      : _PriorityPill(priority: task.priority),
                 ],
               ),
+              if (compact)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task.dueAt == null
+                            ? 'No due date'
+                            : _formatShortDateTime(task.dueAt!),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (task.bucket != TaskBucket.completed &&
+                        !task.isCancelled)
+                      IconButton(
+                        tooltip: task.isFocus
+                            ? 'Remove from Today Focus'
+                            : 'Add to Today Focus',
+                        constraints: const BoxConstraints(
+                          minWidth: MinidoResponsive.tapTarget,
+                          minHeight: MinidoResponsive.tapTarget,
+                        ),
+                        onPressed: onToggleFocus,
+                        icon: Icon(
+                          task.isFocus ? Icons.star : Icons.star_border,
+                          color: task.isFocus ? Colors.amber : null,
+                        ),
+                      ),
+                    if (task.bucket != TaskBucket.completed &&
+                        !task.isCancelled)
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(
+                            MinidoResponsive.tapTarget,
+                            MinidoResponsive.tapTarget,
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        onPressed: onSnooze,
+                        child: const Text('+1d'),
+                      ),
+                    if (onMove != null && column != null) ...[
+                      if (column!.index > 0)
+                        IconButton(
+                          tooltip: 'Move left',
+                          constraints: const BoxConstraints(
+                            minWidth: MinidoResponsive.tapTarget,
+                            minHeight: MinidoResponsive.tapTarget,
+                          ),
+                          onPressed: () =>
+                              onMove!(KanbanColumn.values[column!.index - 1]),
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                      if (column!.index < KanbanColumn.values.length - 1)
+                        IconButton(
+                          tooltip: 'Move right',
+                          constraints: const BoxConstraints(
+                            minWidth: MinidoResponsive.tapTarget,
+                            minHeight: MinidoResponsive.tapTarget,
+                          ),
+                          onPressed: () =>
+                              onMove!(KanbanColumn.values[column!.index + 1]),
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                    ],
+                  ],
+                ),
+              if (task.bucket != TaskBucket.completed &&
+                  !task.isCancelled &&
+                  task.dueAt != null &&
+                  !compact) ...[
+                const SizedBox(height: 7),
+                _DueDatePill(dueAt: task.dueAt!),
+              ],
+              if (task.notes.isNotEmpty && !compact) ...[
+                const SizedBox(height: 6),
+                Text(
+                  task.notes,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              if (task.tags.isNotEmpty && !compact) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 5,
+                  runSpacing: 4,
+                  children: task.tags.map((tag) => _TagPill(tag: tag)).toList(),
+                ),
+              ],
+              if (onMove != null && column != null && !compact) ...[
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (column!.index > 0)
+                      IconButton(
+                        tooltip: 'Move left',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () =>
+                            onMove!(KanbanColumn.values[column!.index - 1]),
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                    if (column!.index < KanbanColumn.values.length - 1)
+                      IconButton(
+                        tooltip: 'Move right',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () =>
+                            onMove!(KanbanColumn.values[column!.index + 1]),
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                  ],
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _PriorityPill extends StatelessWidget {
@@ -515,6 +880,41 @@ class _PriorityPill extends StatelessWidget {
       foreground: foreground,
       background: background,
       icon: Icons.flag_outlined,
+    );
+  }
+}
+
+class _CompactPriorityBadge extends StatelessWidget {
+  const _CompactPriorityBadge({required this.priority});
+
+  final Priority priority;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, foreground, background) = switch (priority) {
+      Priority.high => (
+        'High',
+        const Color(0xFF9E2525),
+        const Color(0xFFFFE2E0),
+      ),
+      Priority.medium => (
+        'Med',
+        const Color(0xFF765600),
+        const Color(0xFFFFF0BE),
+      ),
+      Priority.low => ('Low', const Color(0xFF23633A), const Color(0xFFDDF4E3)),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: foreground, fontWeight: FontWeight.w700),
+      ),
     );
   }
 }

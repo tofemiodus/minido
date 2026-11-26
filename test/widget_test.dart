@@ -38,6 +38,7 @@ void main() {
             priority: Priority.high,
             bucket: TaskBucket.today,
             kanbanColumn: KanbanColumn.inProgress,
+            isFocus: true,
             tags: ['work'],
             subtasks: [
               Subtask(id: 'subtask-1', title: 'Open notebook', isDone: true),
@@ -52,6 +53,7 @@ void main() {
       expect(restored.tasks.single.title, 'Review notes');
       expect(restored.tasks.single.subtasks.single.isDone, isTrue);
       expect(restored.tasks.single.kanbanColumn, KanbanColumn.inProgress);
+      expect(restored.tasks.single.isFocus, isTrue);
     });
 
     test('rejects malformed structure and unsupported schema', () {

@@ -2,6 +2,7 @@
     "name": "Minido",
     "short_name": "Minido",
     "start_url": "./",
+    "scope": "./",
     "display": "standalone",
     "background_color": "#5269D8",
     "theme_color": "#5269D8",

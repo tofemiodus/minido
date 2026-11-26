@@ -7,9 +7,6 @@ on:
         description: Optional version tag to publish (for example v1.0.4)
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write

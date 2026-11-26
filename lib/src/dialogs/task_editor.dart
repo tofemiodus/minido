@@ -30,6 +30,7 @@ class _TaskEditorState extends State<_TaskEditor> {
   late KanbanColumn _column = widget.task.kanbanColumn;
   late List<Subtask> _subtasks = [...widget.task.subtasks];
   late DateTime? _dueAt = widget.task.dueAt;
+  late int _reminderOffsetMinutes = widget.task.reminderOffsetMinutes;
 
   @override
   void dispose() {
@@ -76,6 +77,10 @@ class _TaskEditorState extends State<_TaskEditor> {
           subtasks: List.unmodifiable(_subtasks),
           dueAt: _dueAt,
           clearDueAt: _dueAt == null,
+          reminderOffsetMinutes: _reminderOffsetMinutes,
+          isFocus: _bucket == TaskBucket.completed
+              ? false
+              : widget.task.isFocus,
           completedAt: _bucket == TaskBucket.completed
               ? widget.task.completedAt ?? now
               : null,
@@ -169,6 +174,12 @@ class _TaskEditorState extends State<_TaskEditor> {
                     _DueDateControls(
                       dueAt: _dueAt,
                       onChanged: (value) => setState(() => _dueAt = value),
+                    ),
+                    const SizedBox(height: 12),
+                    _ReminderOffsetSelector(
+                      value: _reminderOffsetMinutes,
+                      onChanged: (value) =>
+                          setState(() => _reminderOffsetMinutes = value),
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<Priority>(
@@ -329,4 +340,58 @@ class _TaskEditorState extends State<_TaskEditor> {
       ),
     ),
   );
+}
+
+class _ReminderOffsetSelector extends StatelessWidget {
+  const _ReminderOffsetSelector({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const shortLabels = <int, String>{
+      -1: 'Off',
+      0: 'At due',
+      15: '15m',
+      60: '1h',
+      1440: '1d',
+    };
+    final selected = MinidoReminder.offsetOptions.contains(value) ? value : 15;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Reminder', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SegmentedButton<int>(
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              minimumSize: WidgetStatePropertyAll(Size(44, 44)),
+              visualDensity: VisualDensity.compact,
+            ),
+            segments: [
+              for (final offset in MinidoReminder.offsetOptions)
+                ButtonSegment<int>(
+                  value: offset,
+                  label: Text(shortLabels[offset]!),
+                  tooltip: MinidoReminder.labelFor(offset),
+                ),
+            ],
+            selected: {selected},
+            onSelectionChanged: (selection) => onChanged(selection.first),
+          ),
+        ),
+        if (kIsWeb)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Scheduled local reminders run on native builds.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+      ],
+    );
+  }
 }

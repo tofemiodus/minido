@@ -8,9 +8,9 @@ class MinidoResponsive {
   static bool isCompact(BuildContext context) =>
       MediaQuery.sizeOf(context).width < 600;
 
-  static double pad(BuildContext context) => isCompact(context) ? 12 : 24;
+  static double pad(BuildContext context) => isCompact(context) ? 12.0 : 24.0;
 
-  static const double tapTarget = 44;
+  static const double tapTarget = 44.0;
 }
 
 class MinidoSnooze {
@@ -24,14 +24,7 @@ class MinidoSnooze {
 
     final now = DateTime.now();
     if (due.isBefore(now)) {
-      final localDue = due.toLocal();
-      return DateTime(
-        now.year,
-        now.month,
-        now.day + 1,
-        localDue.hour,
-        localDue.minute,
-      );
+      return DateTime(now.year, now.month, now.day + 1, due.hour, due.minute);
     }
     return due.add(const Duration(days: 1));
   }
@@ -44,6 +37,23 @@ class MinidoFocus {
   static bool canAdd(int count) => count < max;
   static const String fullMsg =
       'Today Focus is capped at 3 tasks. Unstar one first.';
+}
+
+class MinidoReminder {
+  const MinidoReminder._();
+
+  static const List<int> offsetOptions = [-1, 0, 15, 60, 1440];
+
+  static String labelFor(int? offsetMinutes) => switch (offsetMinutes) {
+    null => '15m before',
+    -1 => 'Off',
+    0 => 'At due time',
+    15 => '15m before',
+    60 => '1h before',
+    1440 => '1d before',
+    final minutes when minutes > 0 => '${minutes}m before',
+    _ => 'Off',
+  };
 }
 
 class MinidoUndo {

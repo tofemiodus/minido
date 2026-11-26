@@ -44,6 +44,30 @@ void main() {
     expect(source.single['tags'], ['home']);
   });
 
+  test('reminder options have stable labels and a legacy default', () {
+    expect(MinidoReminder.labelFor(null), '15m before');
+    expect(MinidoReminder.labelFor(-1), 'Off');
+    expect(MinidoReminder.labelFor(0), 'At due time');
+    expect(MinidoReminder.labelFor(15), '15m before');
+    expect(MinidoReminder.labelFor(60), '1h before');
+    expect(MinidoReminder.labelFor(1440), '1d before');
+    expect(MinidoReminder.labelFor(5), '5m before');
+
+    final oldTask = TodoTask.fromJson({
+      'id': 'legacy-reminder',
+      'title': 'Older backup',
+      'priority': 'medium',
+      'bucket': 'today',
+      'kanbanColumn': 'toDo',
+      'tags': <String>[],
+      'subtasks': <Object>[],
+    });
+    expect(oldTask.reminderOffsetMinutes, 15);
+
+    final customTask = oldTask.copyWith(reminderOffsetMinutes: 60);
+    expect(TodoTask.fromJson(customTask.toJson()).reminderOffsetMinutes, 60);
+  });
+
   test('legacy task backups default Today Focus to false', () {
     final task = TodoTask.fromJson({
       'id': 'legacy',

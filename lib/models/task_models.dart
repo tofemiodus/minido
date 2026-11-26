@@ -45,6 +45,7 @@ class TodoTask {
     this.isCancelled = false,
     bool isFocus = false,
     this.dueAt,
+    this.reminderOffsetMinutes = 15,
     this.cancelledAt,
     this.completedAt,
   }) : updatedAt = updatedAt ?? DateTime.now().toUtc(),
@@ -62,6 +63,7 @@ class TodoTask {
   final bool isCancelled;
   final bool isFocus;
   final DateTime? dueAt;
+  final int reminderOffsetMinutes;
   final DateTime? cancelledAt;
   final DateTime? completedAt;
 
@@ -82,6 +84,7 @@ class TodoTask {
     bool? isCancelled,
     bool? isFocus,
     DateTime? dueAt,
+    int? reminderOffsetMinutes,
     bool clearDueAt = false,
     DateTime? cancelledAt,
     bool clearCancelledAt = false,
@@ -100,6 +103,7 @@ class TodoTask {
     isCancelled: isCancelled ?? this.isCancelled,
     isFocus: isFocus ?? this.isFocus,
     dueAt: clearDueAt ? null : dueAt ?? this.dueAt,
+    reminderOffsetMinutes: reminderOffsetMinutes ?? this.reminderOffsetMinutes,
     cancelledAt: clearCancelledAt ? null : cancelledAt ?? this.cancelledAt,
     completedAt: clearCompletedAt ? null : completedAt ?? this.completedAt,
   );
@@ -117,6 +121,7 @@ class TodoTask {
     'isCancelled': isCancelled,
     'isFocus': isFocus,
     'dueAt': dueAt?.toIso8601String(),
+    'reminderOffsetMinutes': reminderOffsetMinutes,
     'cancelledAt': cancelledAt?.toIso8601String(),
     'completedAt': completedAt?.toIso8601String(),
   };
@@ -155,6 +160,12 @@ class TodoTask {
       isCancelled: _optionalBool(map, 'isCancelled', false, 'task'),
       isFocus: _optionalBool(map, 'isFocus', false, 'task'),
       dueAt: _optionalDateTime(map, 'dueAt'),
+      reminderOffsetMinutes: _optionalInt(
+        map,
+        'reminderOffsetMinutes',
+        15,
+        'task',
+      ),
       cancelledAt: _optionalDateTime(map, 'cancelledAt'),
       completedAt: _optionalDateTime(map, 'completedAt'),
     );
@@ -314,6 +325,20 @@ bool _optionalBool(
   if (value == null) return defaultValue;
   if (value is! bool) {
     throw FormatException('The $label field "$key" must be a boolean.');
+  }
+  return value;
+}
+
+int _optionalInt(
+  Map<String, Object?> map,
+  String key,
+  int defaultValue,
+  String label,
+) {
+  final value = map[key];
+  if (value == null) return defaultValue;
+  if (value is! int) {
+    throw FormatException('The $label field "$key" must be an integer.');
   }
   return value;
 }

@@ -4,6 +4,8 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as timezone_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../utils/minido_helpers.dart';
+
 class NotificationService {
   NotificationService._();
 
@@ -115,7 +117,10 @@ class NotificationService {
   Future<void> scheduleTaskReminders({
     required String taskId,
     required String title,
-    required DateTime dueDate,
+    required DateTime? dueDate,
+    required bool isCompleted,
+    required bool isCancelled,
+    int? reminderOffsetMinutes,
   }) async {
     if (!_isSupported) return;
     await init();
@@ -127,21 +132,35 @@ class NotificationService {
         await _plugin.cancel(id: baseId + index);
       }
 
+      if (kIsWeb || dueDate == null || isCompleted || isCancelled) {
+        return;
+      }
+
+      final offset = reminderOffsetMinutes ?? 15;
+      if (offset < 0) return;
+
       final now = DateTime.now();
-      final reminders = <(Duration, String)>[
-        (const Duration(minutes: -15), 'About to be due'),
-        (Duration.zero, 'Due now'),
-        (const Duration(hours: 1), 'Past due'),
-      ];
+      final dueTime = dueDate.toLocal();
+      final reminders = <(DateTime, String)>[];
+      if (offset >= 0) {
+        reminders.add((dueTime, 'Due now: $title'));
+      }
+      if (offset > 0) {
+        reminders.add((
+          dueTime.subtract(Duration(minutes: offset)),
+          '${MinidoReminder.labelFor(offset)}: $title',
+        ));
+      }
+
+      var notificationIndex = 0;
       for (var index = 0; index < reminders.length; index++) {
-        final (offset, label) = reminders[index];
-        final scheduledAt = dueDate.toLocal().add(offset);
+        final (scheduledAt, notificationTitle) = reminders[index];
         if (!scheduledAt.isAfter(now)) continue;
 
         await _plugin.zonedSchedule(
-          id: baseId + index,
-          title: label,
-          body: title,
+          id: baseId + notificationIndex,
+          title: notificationTitle,
+          body: '',
           scheduledDate: tz.TZDateTime.from(scheduledAt, tz.local),
           notificationDetails: const NotificationDetails(
             android: AndroidNotificationDetails(
@@ -156,6 +175,7 @@ class NotificationService {
           ),
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         );
+        notificationIndex++;
       }
     } catch (error, stackTrace) {
       debugPrint(

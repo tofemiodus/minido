@@ -55,6 +55,7 @@ class _MinidoAppState extends State<MinidoApp> {
   String _viewMode = 'list'; // 'list' | 'kanban' | 'cancelled' | 'statistics'
   int _statisticsPeriodDays = 7;
   DateTime? _dueAt;
+  int _quickReminderOffsetMinutes = 15;
   DateTime? _lastExported;
 
   QuickAddDraft get _quickDraft => parseQuickAdd(_quickAddController.text);
@@ -241,13 +242,23 @@ class _MinidoAppState extends State<MinidoApp> {
 
   Future<void> _syncTaskReminder(TodoTask task) async {
     if (task.isCancelled || task.isCompleted || task.dueAt == null) {
-      await _notificationService.cancelTaskReminders(task.id);
+      await _notificationService.scheduleTaskReminders(
+        taskId: task.id,
+        title: task.title,
+        dueDate: task.dueAt,
+        isCompleted: task.isCompleted,
+        isCancelled: task.isCancelled,
+        reminderOffsetMinutes: task.reminderOffsetMinutes,
+      );
       return;
     }
     await _notificationService.scheduleTaskReminders(
       taskId: task.id,
       title: task.title,
       dueDate: task.dueAt!,
+      isCompleted: task.isCompleted,
+      isCancelled: task.isCancelled,
+      reminderOffsetMinutes: task.reminderOffsetMinutes,
     );
   }
 
@@ -396,6 +407,7 @@ class _MinidoAppState extends State<MinidoApp> {
       bucket: draft.bucket,
       tags: List.unmodifiable(draft.tags),
       dueAt: dueAt,
+      reminderOffsetMinutes: _quickReminderOffsetMinutes,
     );
     final result = await showDialog<bool>(
       context: _navigatorKey.currentContext!,
@@ -1408,6 +1420,12 @@ class _MinidoAppState extends State<MinidoApp> {
             _DueDateControls(
               dueAt: _dueAt,
               onChanged: (value) => setState(() => _dueAt = value),
+            ),
+            const SizedBox(height: 8),
+            _ReminderOffsetSelector(
+              value: _quickReminderOffsetMinutes,
+              onChanged: (value) =>
+                  setState(() => _quickReminderOffsetMinutes = value),
             ),
             if (!compact)
               Align(

@@ -16,8 +16,8 @@ The app has no account, cloud sync, or backend service.
   the native platform share sheet. Backups can be restored by pasting JSON or
   choosing a `.json` file.
 - Today Focus pins up to three tasks; one-tap snooze and undo make due-date
-  changes easy to recover, with offline local reminders on Android, iOS, and
-  macOS.
+  changes easy to recover, with selectable offline reminder timing and due-time
+  alerts on Android, iOS, and macOS.
 
 ## Download and run
 

@@ -33,8 +33,29 @@ class NotificationService {
   Future<void> _initializeSupportedPlatform() async {
     try {
       timezone_data.initializeTimeZones();
-      final timezone = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(timezone.identifier));
+      try {
+        final timezone = await FlutterTimezone.getLocalTimezone();
+        tz.setLocalLocation(tz.getLocation(timezone.identifier));
+      } catch (error) {
+        final localOffset = DateTime.now().timeZoneOffset;
+        tz.Location? matchingLocation;
+        for (final location in tz.timeZoneDatabase.locations.values) {
+          if (location.currentTimeZone.offset == localOffset) {
+            matchingLocation = location;
+            break;
+          }
+        }
+        if (matchingLocation == null) {
+          throw StateError(
+            'Could not match the device time zone offset $localOffset: $error',
+          );
+        }
+        tz.setLocalLocation(matchingLocation);
+        debugPrint(
+          'Could not read the device time zone; using ${matchingLocation.name} '
+          'for its current UTC offset.',
+        );
+      }
       final initialized = await _plugin.initialize(
         settings: const InitializationSettings(
           android: AndroidInitializationSettings('ic_launcher'),
@@ -139,29 +160,28 @@ class NotificationService {
       final offset = reminderOffsetMinutes ?? 15;
       if (offset < 0) return;
 
-      final now = DateTime.now();
-      final dueTime = dueDate.toLocal();
       final reminders = <(DateTime, String)>[];
       if (offset >= 0) {
-        reminders.add((dueTime, 'Due now: $title'));
+        reminders.add((dueDate, 'Due now: $title'));
       }
       if (offset > 0) {
         reminders.add((
-          dueTime.subtract(Duration(minutes: offset)),
+          dueDate.subtract(Duration(minutes: offset)),
           '${MinidoReminder.labelFor(offset)}: $title',
         ));
       }
 
       var notificationIndex = 0;
       for (var index = 0; index < reminders.length; index++) {
-        final (scheduledAt, notificationTitle) = reminders[index];
-        if (!scheduledAt.isAfter(now)) continue;
+        final (targetDateTime, notificationTitle) = reminders[index];
+        final scheduledAt = tz.TZDateTime.from(targetDateTime, tz.local);
+        if (!scheduledAt.isAfter(tz.TZDateTime.now(tz.local))) continue;
 
         await _plugin.zonedSchedule(
           id: baseId + notificationIndex,
           title: notificationTitle,
           body: '',
-          scheduledDate: tz.TZDateTime.from(scheduledAt, tz.local),
+          scheduledDate: scheduledAt,
           notificationDetails: const NotificationDetails(
             android: AndroidNotificationDetails(
               'minido_task_reminders',
@@ -181,6 +201,60 @@ class NotificationService {
       debugPrint(
         'Could not schedule reminders for $taskId: $error\n$stackTrace',
       );
+    }
+  }
+
+  Future<void> sendTestNotificationIn5Seconds({
+    void Function(String message)? onMessage,
+  }) async {
+    if (!_isSupported) {
+      final message = kIsWeb
+          ? 'Local test reminders are unavailable in the web app. Use Minido on Android, iOS, or macOS.'
+          : 'Local test reminders are not supported on this device.';
+      if (onMessage != null) {
+        onMessage(message);
+      } else {
+        debugPrint(message);
+      }
+      return;
+    }
+
+    await init();
+    if (!_initialized) {
+      const message = 'Could not initialize local reminders on this device.';
+      if (onMessage != null) {
+        onMessage(message);
+      } else {
+        debugPrint(message);
+      }
+      return;
+    }
+
+    try {
+      await _plugin.zonedSchedule(
+        id: 999999999,
+        title: 'Minido test reminder',
+        body: 'Your local notifications are working.',
+        scheduledDate: tz.TZDateTime.now(
+          tz.local,
+        ).add(const Duration(seconds: 5)),
+        notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'minido_test_reminders',
+            'Minido test reminders',
+            channelDescription: 'Test local notifications',
+            importance: Importance.defaultImportance,
+            priority: Priority.defaultPriority,
+          ),
+          iOS: DarwinNotificationDetails(),
+          macOS: DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      );
+      onMessage?.call('Test reminder scheduled for 5 seconds from now.');
+    } catch (error, stackTrace) {
+      debugPrint('Could not schedule test reminder: $error\n$stackTrace');
+      onMessage?.call('Could not schedule the test reminder: $error');
     }
   }
 

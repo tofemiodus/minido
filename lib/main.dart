@@ -28,7 +28,7 @@ class MinidoApp extends StatefulWidget {
   State<MinidoApp> createState() => _MinidoAppState();
 }
 
-class _MinidoAppState extends State<MinidoApp> {
+class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _quickAddFocus = FocusNode();
@@ -63,7 +63,9 @@ class _MinidoAppState extends State<MinidoApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_notificationService.init());
+    unawaited(_requestMobileNotificationPermissions());
     if (kIsWeb) {
       _removeInstallPromptListener = listenForInstallPrompt((eventType) {
         if (!mounted) return;
@@ -79,10 +81,29 @@ class _MinidoAppState extends State<MinidoApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _quickAddFocus.dispose();
     _quickAddController.dispose();
     _removeInstallPromptListener?.call();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_requestMobileNotificationPermissions());
+    }
+  }
+
+  Future<void> _requestMobileNotificationPermissions() async {
+    if (kIsWeb ||
+        !{
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+        }.contains(defaultTargetPlatform)) {
+      return;
+    }
+    await _notificationService.requestPermissions();
   }
 
   Future<void> _initialize() async {
@@ -975,6 +996,12 @@ class _MinidoAppState extends State<MinidoApp> {
                   setState(() => _viewMode = 'statistics');
                 case 'reminders':
                   unawaited(_enableReminders());
+                case 'test-reminder':
+                  unawaited(
+                    _notificationService.sendTestNotificationIn5Seconds(
+                      onMessage: (message) => _showMessage(message),
+                    ),
+                  );
                 case 'theme':
                   _toggleTheme();
                 case 'load-samples':
@@ -1005,6 +1032,14 @@ class _MinidoAppState extends State<MinidoApp> {
                 child: ListTile(
                   leading: Icon(Icons.notifications_active_outlined),
                   title: Text('Enable reminders'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'test-reminder',
+                child: ListTile(
+                  leading: Icon(Icons.notifications_active),
+                  title: Text('Test Reminder (5s)'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),

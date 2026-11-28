@@ -10,6 +10,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/task_models.dart' hide Priority;
 import '../utils/minido_helpers.dart';
+
 // ─── Alert event (Layer A stream) ───────────────────────────────────────────
 
 class AlertEvent {
@@ -54,8 +55,7 @@ class NotificationService {
   /// True on platforms that support flutter_local_notifications background
   /// scheduling (Layer B): Android, iOS, macOS (non-web only).
   bool get _supportsLayerB =>
-      !kIsWeb &&
-      (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
   /// True on platforms where flutter_local_notifications can show foreground
   /// notifications at all (Layer A instant show): non-web only.
@@ -113,7 +113,8 @@ class NotificationService {
         try {
           await _plugin
               .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
+                AndroidFlutterLocalNotificationsPlugin
+              >()
               ?.createNotificationChannel(
                 const AndroidNotificationChannel(
                   'minido_reminders',
@@ -188,7 +189,9 @@ class NotificationService {
     } catch (_) {}
 
     // Emit alert event so the UI can show a banner.
-    _alertController.add(AlertEvent(taskId: taskId, title: title, dueAt: dueAt));
+    _alertController.add(
+      AlertEvent(taskId: taskId, title: title, dueAt: dueAt),
+    );
   }
 
   Future<void> _showInstant(String taskId, String title) async {
@@ -246,21 +249,24 @@ class NotificationService {
       if (Platform.isAndroid) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
-                  AndroidFlutterLocalNotificationsPlugin>()
+                  AndroidFlutterLocalNotificationsPlugin
+                >()
                 ?.requestNotificationsPermission() ??
             false;
       }
       if (Platform.isIOS) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
-                  IOSFlutterLocalNotificationsPlugin>()
+                  IOSFlutterLocalNotificationsPlugin
+                >()
                 ?.requestPermissions(alert: true, badge: true, sound: true) ??
             false;
       }
       if (Platform.isMacOS) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
-                  MacOSFlutterLocalNotificationsPlugin>()
+                  MacOSFlutterLocalNotificationsPlugin
+                >()
                 ?.requestPermissions(alert: true, badge: true, sound: true) ??
             false;
       }

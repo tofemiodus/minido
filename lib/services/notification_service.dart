@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -55,7 +54,10 @@ class NotificationService {
   /// True on platforms that support flutter_local_notifications background
   /// scheduling (Layer B): Android, iOS, macOS (non-web only).
   bool get _supportsLayerB =>
-      !kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+       defaultTargetPlatform == TargetPlatform.iOS ||
+       defaultTargetPlatform == TargetPlatform.macOS);
 
   /// True on platforms where flutter_local_notifications can show foreground
   /// notifications at all (Layer A instant show): non-web only.
@@ -109,7 +111,7 @@ class NotificationService {
       if (ok == false) throw StateError('Plugin did not initialize.');
 
       // Create the high-importance channel on Android.
-      if (!kIsWeb && Platform.isAndroid) {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
         try {
           await _plugin
               .resolvePlatformSpecificImplementation<
@@ -246,7 +248,7 @@ class NotificationService {
     if (!_initialized) return false;
 
     try {
-      if (Platform.isAndroid) {
+      if (defaultTargetPlatform == TargetPlatform.android) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
                   AndroidFlutterLocalNotificationsPlugin
@@ -254,7 +256,7 @@ class NotificationService {
                 ?.requestNotificationsPermission() ??
             false;
       }
-      if (Platform.isIOS) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
                   IOSFlutterLocalNotificationsPlugin
@@ -262,7 +264,7 @@ class NotificationService {
                 ?.requestPermissions(alert: true, badge: true, sound: true) ??
             false;
       }
-      if (Platform.isMacOS) {
+      if (defaultTargetPlatform == TargetPlatform.macOS) {
         return await _plugin
                 .resolvePlatformSpecificImplementation<
                   MacOSFlutterLocalNotificationsPlugin

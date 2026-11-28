@@ -33,8 +33,11 @@ QuickParseResult quickParse(String input) {
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-typedef _Parser =
-    QuickParseResult? Function(String input, DateTime now, DateTime today);
+typedef _Parser = QuickParseResult? Function(
+  String input,
+  DateTime now,
+  DateTime today,
+);
 
 String _strip(String input, String phrase) =>
     input.replaceFirst(phrase, '').replaceAll(RegExp(r'\s{2,}'), ' ').trim();
@@ -81,8 +84,10 @@ DateTime _withTime(DateTime base, int hour, int minute) =>
 final List<_Parser> _parsers = [
   // "in Xm" / "in Xh" / "in Xd"
   (input, now, _) {
-    final re = RegExp(r'\bin\s+(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:ours?)?|d(?:ays?)?)\b',
-        caseSensitive: false);
+    final re = RegExp(
+      r'\bin\s+(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:ours?)?|d(?:ays?)?)\b',
+      caseSensitive: false,
+    );
     final m = re.firstMatch(input);
     if (m == null) return null;
     final amount = int.parse(m.group(1)!);
@@ -187,8 +192,13 @@ final List<_Parser> _parsers = [
     final m = re.firstMatch(input);
     if (m == null) return null;
     const weekdayMap = {
-      'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4,
-      'fri': 5, 'sat': 6, 'sun': 7,
+      'mon': 1,
+      'tue': 2,
+      'wed': 3,
+      'thu': 4,
+      'fri': 5,
+      'sat': 6,
+      'sun': 7,
     };
     final key = m.group(1)!.toLowerCase().substring(0, 3);
     final targetWeekday = weekdayMap[key]!;

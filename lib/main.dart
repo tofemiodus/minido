@@ -664,7 +664,9 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Task cancelled${cancelReason != null ? ' · $cancelReason' : ''}'),
+              Text(
+                'Task cancelled${cancelReason != null ? ' · $cancelReason' : ''}',
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
@@ -975,28 +977,30 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     theme: ThemeData(
       useMaterial3: true,
       // v2.2.0: Warm Paper — #FAF8F5 surface, #18181B ink, #C2410C accent.
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFFC2410C),
-        surface: const Color(0xFFFAF8F5),
-      ).copyWith(
-        onSurface: const Color(0xFF18181B),
-        primary: const Color(0xFFC2410C),
-        onPrimary: const Color(0xFFFAF8F5),
-      ),
+      colorScheme:
+          ColorScheme.fromSeed(
+            seedColor: const Color(0xFFC2410C),
+            surface: const Color(0xFFFAF8F5),
+          ).copyWith(
+            onSurface: const Color(0xFF18181B),
+            primary: const Color(0xFFC2410C),
+            onPrimary: const Color(0xFFFAF8F5),
+          ),
       scaffoldBackgroundColor: const Color(0xFFFAF8F5),
     ),
     darkTheme: ThemeData(
       useMaterial3: true,
       // v2.2.0: OLED Pitch Black — #000000 surface, #F4F4F5 ink, #FB923C accent.
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFFFB923C),
-        brightness: Brightness.dark,
-        surface: const Color(0xFF000000),
-      ).copyWith(
-        onSurface: const Color(0xFFF4F4F5),
-        primary: const Color(0xFFFB923C),
-        onPrimary: const Color(0xFF000000),
-      ),
+      colorScheme:
+          ColorScheme.fromSeed(
+            seedColor: const Color(0xFFFB923C),
+            brightness: Brightness.dark,
+            surface: const Color(0xFF000000),
+          ).copyWith(
+            onSurface: const Color(0xFFF4F4F5),
+            primary: const Color(0xFFFB923C),
+            onPrimary: const Color(0xFF000000),
+          ),
       scaffoldBackgroundColor: const Color(0xFF000000),
     ),
     home: Builder(
@@ -1389,8 +1393,10 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
       ),
       child: Row(
         children: [
-          Icon(Icons.wb_sunny_outlined,
-              color: theme.colorScheme.onSecondaryContainer),
+          Icon(
+            Icons.wb_sunny_outlined,
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -1698,7 +1704,9 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                   alignment: Alignment.centerLeft,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(20),
@@ -1706,9 +1714,11 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.event,
-                            size: 14,
-                            color: theme.colorScheme.onPrimaryContainer),
+                        Icon(
+                          Icons.event,
+                          size: 14,
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           _liveParseResult!.matchedPhrase ?? '',
@@ -1722,9 +1732,11 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                           onTap: () => setState(() {
                             _parsedDateCleared = true;
                           }),
-                          child: Icon(Icons.close,
-                              size: 14,
-                              color: theme.colorScheme.onPrimaryContainer),
+                          child: Icon(
+                            Icons.close,
+                            size: 14,
+                            color: theme.colorScheme.onPrimaryContainer,
+                          ),
                         ),
                       ],
                     ),

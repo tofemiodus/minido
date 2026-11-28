@@ -15,105 +15,8 @@ permissions:
   contents: write
 
 jobs:
-  build-linux-web:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev rpm dpkg-dev elfutils
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.50.0'
-          cache: true
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Linux
-        run: flutter build linux --release
-
-      - name: Package Linux
-        run: |
-          mkdir -p dist/Minido-Linux-x64
-          cp -a build/linux/x64/release/bundle/. dist/Minido-Linux-x64/
-          tar -czf Minido-Linux-x64.tar.gz -C dist Minido-Linux-x64
-
-      - name: Package Debian, RPM, and Arch assets
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version: \([0-9.]*\).*/\1/p' pubspec.yaml)"
-          test -n "$version"
-          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match pubspec version v$version" >&2
-            exit 1
-          fi
-          if [[ -n "${RELEASE_TAG:-}" && "$RELEASE_TAG" != "v$version" ]]; then
-            echo "Requested release tag $RELEASE_TAG does not match pubspec version v$version" >&2
-            exit 1
-          fi
-          deb="$RUNNER_TEMP/minido-deb"
-          rpm_root="$RUNNER_TEMP/rpmbuild"
-          mkdir -p "$deb/DEBIAN" "$deb/opt/minido" \
-            "$deb/usr/share/applications" \
-            "$deb/usr/share/icons/hicolor/512x512/apps" \
-            "$rpm_root/BUILD" "$rpm_root/BUILDROOT" "$rpm_root/RPMS/x86_64" \
-            "$rpm_root/SOURCES" "$rpm_root/SPECS" "$rpm_root/SRPMS"
-          cp dist/Minido-Linux-x64/data/flutter_assets/assets/brand/minido_logo.png \
-            "$deb/usr/share/icons/hicolor/512x512/apps/minido.png"
-          cp packaging/linux/minido.desktop "$deb/usr/share/applications/minido.desktop"
-          cp -a dist/Minido-Linux-x64/. "$deb/opt/minido/"
-          sed "s/@APP_VERSION@/$version/" packaging/linux/control > "$deb/DEBIAN/control"
-          chmod 0755 "$deb/DEBIAN"
-          dpkg-deb --build --root-owner-group "$deb" minido_amd64.deb
-
-          cp Minido-Linux-x64.tar.gz "$rpm_root/SOURCES/"
-          cp packaging/linux/minido.desktop "$rpm_root/SOURCES/"
-          cp dist/Minido-Linux-x64/data/flutter_assets/assets/brand/minido_logo.png \
-            "$rpm_root/SOURCES/minido.png"
-          sed "s/@APP_VERSION@/$version/" packaging/linux/minido.spec > "$rpm_root/SPECS/minido.spec"
-          rpmbuild -bb --define "_topdir $rpm_root" "$rpm_root/SPECS/minido.spec"
-          cp "$rpm_root/RPMS/x86_64/"minido-"$version"-1.x86_64.rpm minido-x86_64.rpm
-
-          checksum="$(sha256sum Minido-Linux-x64.tar.gz | cut -d ' ' -f 1)"
-          sed -e "s|@APP_VERSION@|$version|g" \
-            -e "s|@REPOSITORY@|$GITHUB_REPOSITORY|g" \
-            -e "s|@APP_SHA256@|$checksum|g" \
-            packaging/linux/PKGBUILD.in > PKGBUILD
-
-      - name: Build PWA Web
-        run: flutter build web --release --base-href /
-
-      - name: Package PWA Web
-        shell: bash
-        run: |
-          cd build/web
-          zip -qr ../../Minido-PWA-Web.zip .
-
-      - name: Upload Linux and Web artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-web
-          path: |
-            Minido-Linux-x64.tar.gz
-            minido_amd64.deb
-            minido-x86_64.rpm
-            PKGBUILD
-            Minido-PWA-Web.zip
-          if-no-files-found: error
-
   build-android:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -127,7 +30,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.50.0'
+          flutter-version: '3.50.x'
           cache: true
 
       - name: Install dependencies
@@ -147,6 +50,37 @@ jobs:
           path: Minido-Android.apk
           if-no-files-found: error
 
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.x'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Web
+        run: flutter build web --release
+
+      - name: Package Web
+        shell: bash
+        run: |
+          cd build/web
+          zip -qr ../../Minido-Web.zip .
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: Minido-Web.zip
+          if-no-files-found: error
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -156,7 +90,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.50.0'
+          flutter-version: '3.50.x'
           cache: true
 
       - name: Install dependencies
@@ -167,16 +101,50 @@ jobs:
 
       - name: Package Windows
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath Minido-Windows-x64.zip -Force
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath Minido-Windows.zip -Force
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: Minido-Windows-x64.zip
+          path: Minido-Windows.zip
           if-no-files-found: error
 
-  build-apple:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.x'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package Linux
+        run: |
+          tar -czf Minido-Linux.tar.gz -C build/linux/x64/release/bundle .
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: Minido-Linux.tar.gz
+          if-no-files-found: error
+
+  build-macos:
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -185,7 +153,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.50.0'
+          flutter-version: '3.50.x'
           cache: true
 
       - name: Install dependencies
@@ -199,6 +167,28 @@ jobs:
           ditto build/macos/Build/Products/Release/minido.app Minido.app
           ditto -c -k --sequesterRsrc --keepParent Minido.app Minido-macOS.zip
 
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: Minido-macOS.zip
+          if-no-files-found: error
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.x'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
       - name: Build unsigned iOS
         run: flutter build ios --release --no-codesign
 
@@ -208,18 +198,16 @@ jobs:
           ditto build/ios/iphoneos/Runner.app Payload/Runner.app
           ditto -c -k --sequesterRsrc Payload Minido-iOS-unsigned.ipa
 
-      - name: Upload Apple artifacts
+      - name: Upload iOS artifact
         uses: actions/upload-artifact@v7
         with:
-          name: apple
-          path: |
-            Minido-macOS.zip
-            Minido-iOS-unsigned.ipa
+          name: ios
+          path: Minido-iOS-unsigned.ipa
           if-no-files-found: error
 
-  publish-release:
+  release:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
-    needs: [build-linux-web, build-android, build-windows, build-apple]
+    needs: [build-android, build-web, build-windows, build-linux, build-macos, build-ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write

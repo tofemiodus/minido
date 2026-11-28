@@ -11,6 +11,7 @@ import 'data/task_store.dart';
 import 'services/notification_service.dart';
 import 'services/pwa_install.dart';
 import 'utils/minido_helpers.dart';
+import 'utils/quick_parse.dart';
 
 part 'src/views/task_views.dart';
 part 'src/views/statistics_view.dart';
@@ -39,6 +40,8 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
 
   List<TodoTask> _tasks = const [];
   ThemeMode _themeMode = ThemeMode.light;
+  // v2.2.0: 'warm' | 'oled' curated themes (stored alongside ThemeMode)
+  String _craftTheme = 'warm'; // 'warm' | 'oled'
   Priority? _priorityFilter;
   final Set<String> _tagFilters = {};
   String _search = '';
@@ -55,10 +58,39 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   String _viewMode = 'list'; // 'list' | 'kanban' | 'cancelled' | 'statistics'
   int _statisticsPeriodDays = 7;
   DateTime? _dueAt;
+  bool _parsedDateCleared = false;
   int _quickReminderOffsetMinutes = 15;
   DateTime? _lastExported;
+  // v2.2.0: Morning Rollover dismissed flag.
+  bool _dismissedRollover = false;
+  // v2.2.0: active due-reminder alert banner.
+  AlertEvent? _activeAlert;
+  StreamSubscription<AlertEvent>? _alertSub;
 
   QuickAddDraft get _quickDraft => parseQuickAdd(_quickAddController.text);
+
+  // v2.2.0: live quick-parse preview — only shown when user has NOT cleared it.
+  QuickParseResult? get _liveParseResult {
+    if (_parsedDateCleared) return null;
+    final raw = _quickAddController.text;
+    if (raw.trim().isEmpty) return null;
+    final result = quickParse(raw);
+    return result.hasDate ? result : null;
+  }
+
+  // v2.2.0: tasks from before today that are still active (morning rollover).
+  List<TodoTask> get _rolloverTasks {
+    final todayMidnight = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
+    return _tasks.where((t) {
+      if (t.isCompleted || t.isCancelled) return false;
+      // Use updatedAt as a proxy for when the task was last modified.
+      return t.updatedAt.toLocal().isBefore(todayMidnight);
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -66,6 +98,11 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(_notificationService.init());
     unawaited(_requestMobileNotificationPermissions());
+    // v2.2.0: subscribe to Layer A alert events for in-app banner.
+    _alertSub = _notificationService.onAlert.listen((event) {
+      if (!mounted) return;
+      setState(() => _activeAlert = event);
+    });
     if (kIsWeb) {
       _removeInstallPromptListener = listenForInstallPrompt((eventType) {
         if (!mounted) return;
@@ -85,6 +122,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     _quickAddFocus.dispose();
     _quickAddController.dispose();
     _removeInstallPromptListener?.call();
+    _alertSub?.cancel();
     super.dispose();
   }
 
@@ -92,6 +130,8 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_requestMobileNotificationPermissions());
+      // v2.2.0: also trigger Layer A watcher on resume.
+      _notificationService.checkDueNow();
     }
   }
 
@@ -134,6 +174,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
       for (final task in document.tasks) {
         unawaited(_syncTaskReminder(task));
       }
+      unawaited(_notificationService.syncTasks(document.tasks));
     } on FormatException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -190,6 +231,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   ];
 
   Future<void> _persist() async {
+    unawaited(_notificationService.syncTasks(_tasks));
     final document = BackupDocument(
       tasks: List.unmodifiable(_tasks),
       themeMode: _themeMode == ThemeMode.dark ? 'dark' : 'light',
@@ -420,7 +462,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
 
   Future<void> _showQuickAddConfirmation() async {
     final draft = _quickDraft;
-    final dueAt = _dueAt;
+    final dueAt = _dueAt ?? _liveParseResult?.dateTime;
     var reminderOffsetMinutes = _quickReminderOffsetMinutes;
     final result = await showDialog<bool>(
       context: _navigatorKey.currentContext!,
@@ -477,6 +519,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
       _tasks = [..._tasks, task];
       _quickAddController.clear();
       _dueAt = null;
+      _parsedDateCleared = false;
       _quickReminderOffsetMinutes = reminderOffsetMinutes;
     });
     unawaited(_syncTaskReminder(task));
@@ -590,7 +633,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     );
   }
 
-  void _cancelTask(TodoTask task) {
+  void _cancelTask(TodoTask task, {String? cancelReason}) {
     final now = DateTime.now().toUtc();
     final cancelled = task.copyWith(
       isCancelled: true,
@@ -606,11 +649,45 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     });
     unawaited(_syncTaskReminder(cancelled));
     unawaited(_persist());
-    _showMessage(
-      'Task cancelled',
-      action: 'Undo',
-      onAction: () => _uncancelTask(task),
-    );
+    // v2.2.0: show cancellation reason chips in the snackbar.
+    _showCancelSnackBar(task, cancelReason: cancelReason);
+  }
+
+  void _showCancelSnackBar(TodoTask task, {String? cancelReason}) {
+    final reasons = ['No longer needed', 'Delegated', 'Overcommitted'];
+    _messengerKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Task cancelled${cancelReason != null ? ' · $cancelReason' : ''}'),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                children: [
+                  for (final r in reasons)
+                    ActionChip(
+                      label: Text(r, style: const TextStyle(fontSize: 11)),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        _messengerKey.currentState?.hideCurrentSnackBar();
+                        _cancelTask(task, cancelReason: r);
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => _uncancelTask(task),
+          ),
+        ),
+      );
   }
 
   void _uncancelTask(TodoTask task) {
@@ -661,7 +738,7 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     );
     if (!mounted || result == null) return;
     if (result.cancelled) {
-      _cancelTask(task);
+      _cancelTask(task, cancelReason: null);
     } else if (result.task != null) {
       _replaceTask(result.task!);
     }
@@ -897,15 +974,30 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
     themeMode: _themeMode,
     theme: ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5266D7)),
-      scaffoldBackgroundColor: const Color(0xFFF7F8FC),
+      // v2.2.0: Warm Paper — #FAF8F5 surface, #18181B ink, #C2410C accent.
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFFC2410C),
+        surface: const Color(0xFFFAF8F5),
+      ).copyWith(
+        onSurface: const Color(0xFF18181B),
+        primary: const Color(0xFFC2410C),
+        onPrimary: const Color(0xFFFAF8F5),
+      ),
+      scaffoldBackgroundColor: const Color(0xFFFAF8F5),
     ),
     darkTheme: ThemeData(
       useMaterial3: true,
+      // v2.2.0: OLED Pitch Black — #000000 surface, #F4F4F5 ink, #FB923C accent.
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF9AA8FF),
+        seedColor: const Color(0xFFFB923C),
         brightness: Brightness.dark,
+        surface: const Color(0xFF000000),
+      ).copyWith(
+        onSurface: const Color(0xFFF4F4F5),
+        primary: const Color(0xFFFB923C),
+        onPrimary: const Color(0xFF000000),
       ),
+      scaffoldBackgroundColor: const Color(0xFF000000),
     ),
     home: Builder(
       builder: (context) => Focus(
@@ -961,16 +1053,16 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
           if (kIsWeb) _offlineReadyPill(),
           if (!compact)
             IconButton(
-              tooltip: _themeMode == ThemeMode.dark
-                  ? 'Switch to light theme'
-                  : 'Switch to dark theme',
+              tooltip: _craftTheme == 'oled'
+                  ? 'Switch to Warm Paper theme'
+                  : 'Switch to OLED Pitch Black theme',
               constraints: const BoxConstraints(
                 minWidth: MinidoResponsive.tapTarget,
                 minHeight: MinidoResponsive.tapTarget,
               ),
               onPressed: _toggleTheme,
               icon: Icon(
-                _themeMode == ThemeMode.dark
+                _craftTheme == 'oled'
                     ? Icons.light_mode_outlined
                     : Icons.dark_mode_outlined,
               ),
@@ -998,8 +1090,8 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                   unawaited(_enableReminders());
                 case 'test-reminder':
                   unawaited(
-                    _notificationService.sendTestNotificationIn5Seconds(
-                      onMessage: (message) => _showMessage(message),
+                    _notificationService.triggerTestReminder().then(
+                      (status) => _showMessage(status),
                     ),
                   );
                 case 'theme':
@@ -1135,6 +1227,11 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                   _firstRunWelcomeCard(),
                 if (kIsWeb && !isStandalonePwa && !_dismissedInstallBanner)
                   _installBanner(),
+                // v2.2.0: Due reminder banner from Layer A alerts.
+                if (_activeAlert != null) _buildAlertBanner(_activeAlert!),
+                // v2.2.0: Morning rollover banner.
+                if (!_dismissedRollover && _rolloverTasks.isNotEmpty)
+                  _buildRolloverBanner(),
                 Expanded(
                   child: Center(
                     child: ConstrainedBox(
@@ -1177,11 +1274,16 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
   );
 
   void _toggleTheme() {
-    setState(
-      () => _themeMode = _themeMode == ThemeMode.dark
-          ? ThemeMode.light
-          : ThemeMode.dark,
-    );
+    // v2.2.0: cycle through craft themes: warm → oled → warm
+    setState(() {
+      if (_craftTheme == 'warm') {
+        _craftTheme = 'oled';
+        _themeMode = ThemeMode.dark;
+      } else {
+        _craftTheme = 'warm';
+        _themeMode = ThemeMode.light;
+      }
+    });
     unawaited(_persist());
   }
 
@@ -1222,6 +1324,126 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // v2.2.0: Due-reminder alert banner (Layer A driven).
+  Widget _buildAlertBanner(AlertEvent event) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.alarm, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '⏰ Due: ${event.title}',
+              style: TextStyle(
+                color: theme.colorScheme.onErrorContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              final idx = _tasks.indexWhere((t) => t.id == event.taskId);
+              if (idx >= 0) _toggleCompletion(_tasks[idx]);
+              setState(() => _activeAlert = null);
+            },
+            child: const Text('Done'),
+          ),
+          TextButton(
+            onPressed: () {
+              final idx = _tasks.indexWhere((t) => t.id == event.taskId);
+              if (idx >= 0) _snoozeTask(_tasks[idx]);
+              setState(() => _activeAlert = null);
+            },
+            child: const Text('+1d'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: () => setState(() => _activeAlert = null),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // v2.2.0: Morning rollover banner.
+  Widget _buildRolloverBanner() {
+    final theme = Theme.of(context);
+    final tasks = _rolloverTasks;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wb_sunny_outlined,
+              color: theme.colorScheme.onSecondaryContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${tasks.length} task${tasks.length == 1 ? '' : 's'} from earlier — roll over?',
+              style: TextStyle(
+                color: theme.colorScheme.onSecondaryContainer,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              final now = DateTime.now().toUtc();
+              final todayEnd = DateTime(
+                DateTime.now().year,
+                DateTime.now().month,
+                DateTime.now().day,
+                23,
+                59,
+              ).toUtc();
+              setState(() {
+                _tasks = [
+                  for (final t in _tasks)
+                    if (tasks.any((r) => r.id == t.id))
+                      t.copyWith(
+                        bucket: TaskBucket.today,
+                        dueAt: t.dueAt ?? todayEnd,
+                        updatedAt: now,
+                      )
+                    else
+                      t,
+                ];
+                _dismissedRollover = true;
+              });
+              unawaited(_persist());
+            },
+            child: const Text('Move to Today'),
+          ),
+          TextButton(
+            onPressed: () {
+              for (final t in tasks) {
+                _snoozeTask(t);
+              }
+              setState(() => _dismissedRollover = true);
+            },
+            child: const Text('Snooze +1d'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Dismiss',
+            onPressed: () => setState(() => _dismissedRollover = true),
+          ),
+        ],
       ),
     );
   }
@@ -1439,7 +1661,9 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
                       border: InputBorder.none,
                       isDense: compact,
                     ),
-                    onChanged: (_) => setState(() {}),
+                    onChanged: (_) => setState(() {
+                      _parsedDateCleared = false;
+                    }),
                     onSubmitted: (_) => _addQuickTask(),
                   ),
                 ),
@@ -1466,6 +1690,47 @@ class _MinidoAppState extends State<MinidoApp> with WidgetsBindingObserver {
               dueAt: _dueAt,
               onChanged: (value) => setState(() => _dueAt = value),
             ),
+            // v2.2.0: Quick-parse live date preview pill.
+            if (_liveParseResult != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.event,
+                            size: 14,
+                            color: theme.colorScheme.onPrimaryContainer),
+                        const SizedBox(width: 4),
+                        Text(
+                          _liveParseResult!.matchedPhrase ?? '',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onPrimaryContainer,
+                            fontFeatures: [const FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        GestureDetector(
+                          onTap: () => setState(() {
+                            _parsedDateCleared = true;
+                          }),
+                          child: Icon(Icons.close,
+                              size: 14,
+                              color: theme.colorScheme.onPrimaryContainer),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (!compact)
               Align(
                 alignment: Alignment.centerLeft,
